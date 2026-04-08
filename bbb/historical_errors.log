@@ -1,0 +1,90 @@
+2026-03-17T04:43:46.668125 | 2025-03-17 to 2025-03-23 | Object of type date is not JSON serializable
+2026-03-17T04:44:42.778617 | 2025-03-24 to 2025-03-30 | Could not find BBB scam result payload in page HTML.
+2026-03-17T04:45:15.099742 | 2025-03-31 to 2025-04-06 | Expecting ',' delimiter: line 1 column 78971 (char 78970)
+2026-03-17T04:45:46.986403 | 2025-04-07 to 2025-04-13 | Could not find BBB scam result payload in page HTML.
+2026-03-17T04:48:06.440052 | 2026-03-09 to 2026-03-15 | Could not find BBB scam result payload in page HTML. | traceback=Traceback (most recent call last):
+  File "/workspaces/public-urls-scam-alerts/bbb/fetch_historical.py", line 334, in run_historical_scrape
+    weekly_records = scrape_week(session, week_start, week_end)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/public-urls-scam-alerts/bbb/fetch_historical.py", line 138, in scrape_week
+    payload = _extract_scam_result_payload(response.text)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/public-urls-scam-alerts/bbb/fetch_historical.py", line 74, in _extract_scam_result_payload
+    raise RuntimeError("Could not find BBB scam result payload in page HTML.")
+RuntimeError: Could not find BBB scam result payload in page HTML.
+2026-03-17T04:50:53.522297 | 2026-03-09 to 2026-03-15 | Out of range float values are not JSON compliant: nan | traceback=Traceback (most recent call last):
+  File "/workspaces/public-urls-scam-alerts/bbb/fetch_historical.py", line 392, in run_historical_scrape
+    upserted_count = upsert_trend_rows(client, weekly_trends)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/public-urls-scam-alerts/bbb/fetch_historical.py", line 264, in upsert_trend_rows
+    ).execute()
+      ^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/site-packages/postgrest/_sync/request_builder.py", line 47, in execute
+    r = self.request.send()
+        ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/site-packages/postgrest/base_request_builder.py", line 82, in send
+    return self.session.request(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_client.py", line 812, in request
+    request = self.build_request(
+              ^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_client.py", line 378, in build_request
+    return Request(
+           ^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_models.py", line 408, in __init__
+    headers, stream = encode_request(
+                      ^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_content.py", line 216, in encode_request
+    return encode_json(json)
+           ^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_content.py", line 177, in encode_json
+    body = json_dumps(
+           ^^^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/json/__init__.py", line 238, in dumps
+    **kw).encode(obj)
+          ^^^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/json/encoder.py", line 200, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/json/encoder.py", line 258, in iterencode
+    return _iterencode(o, 0)
+           ^^^^^^^^^^^^^^^^^
+ValueError: Out of range float values are not JSON compliant: nan
+2026-03-17T04:52:32.487725 | 2026-03-09 to 2026-03-15 | Out of range float values are not JSON compliant: nan | traceback=Traceback (most recent call last):
+  File "/workspaces/public-urls-scam-alerts/bbb/fetch_historical.py", line 395, in run_historical_scrape
+    upserted_count = upsert_trend_rows(client, weekly_trends)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/public-urls-scam-alerts/bbb/fetch_historical.py", line 267, in upsert_trend_rows
+    ).execute()
+      ^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/site-packages/postgrest/_sync/request_builder.py", line 47, in execute
+    r = self.request.send()
+        ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/site-packages/postgrest/base_request_builder.py", line 82, in send
+    return self.session.request(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_client.py", line 812, in request
+    request = self.build_request(
+              ^^^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_client.py", line 378, in build_request
+    return Request(
+           ^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_models.py", line 408, in __init__
+    headers, stream = encode_request(
+                      ^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_content.py", line 216, in encode_request
+    return encode_json(json)
+           ^^^^^^^^^^^^^^^^^
+  File "/home/codespace/.local/lib/python3.12/site-packages/httpx/_content.py", line 177, in encode_json
+    body = json_dumps(
+           ^^^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/json/__init__.py", line 238, in dumps
+    **kw).encode(obj)
+          ^^^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/json/encoder.py", line 200, in encode
+    chunks = self.iterencode(o, _one_shot=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/json/encoder.py", line 258, in iterencode
+    return _iterencode(o, 0)
+           ^^^^^^^^^^^^^^^^^
+ValueError: Out of range float values are not JSON compliant: nan
