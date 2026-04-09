@@ -107,6 +107,13 @@ NATIONAL_FLOORS: dict[str, int] = {
 TIER_ORDER = {"CRITICAL": 0, "ALERT": 1, "WATCH": 2}
 
 
+def sunday_ending_week_containing(today: date | None = None) -> date:
+    """Sunday at end of the Mon–Sun week that contains `today` (may be today or in the future)."""
+    if today is None:
+        today = date.today()
+    return today + timedelta(days=(6 - today.weekday()) % 7)
+
+
 # ── Supabase connection ────────────────────────────────────────────────────────
 
 def get_supabase_client() -> Client:
@@ -133,8 +140,10 @@ def get_supabase_client() -> Client:
 
 def pull_trends_data(client: Client) -> pd.DataFrame:
     cutoff = (date.today() - timedelta(weeks=LOOKBACK_WEEKS)).isoformat()
-    days_since_last_sunday = date.today().weekday() + 1
-    last_completed_week_end = (date.today() - timedelta(days=days_since_last_sunday)).isoformat()
+    # Include the week bucket that contains today. `build_trends` maps each report to the
+    # Sunday ending its Mon–Sun week; capping at *last* Sunday dropped the in-progress
+    # bucket (Mon..today) so mid-week runs saw no "current" spike rows.
+    trends_week_upper = sunday_ending_week_containing().isoformat()
     rows: list[dict[str, Any]] = []
     page_size = 1000
     offset = 0
@@ -144,7 +153,7 @@ def pull_trends_data(client: Client) -> pd.DataFrame:
             client.table("bbb_trends")
             .select("week_ending,scam_type,state,report_count,avg_dollar_amount")
             .gte("week_ending", cutoff)
-            .lte("week_ending", last_completed_week_end)
+            .lte("week_ending", trends_week_upper)
             .range(offset, offset + page_size - 1)
             .execute()
         )

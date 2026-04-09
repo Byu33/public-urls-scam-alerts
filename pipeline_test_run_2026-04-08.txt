@@ -1,0 +1,275 @@
+PIPELINE TEST RUN — 2026-04-09
+Run timestamp: 2026-04-09T15:07:56Z
+Total runtime: 1537.49 seconds (~25.6 minutes)
+================================================================================
+
+RESULT SUMMARY
+--------------
+✅ No step failures detected
+✅ Steps 1–7 all completed (BBB pipeline)
+✅ Steps 9–13 all completed (CFPB pipeline — first successful run)
+✅ Step 7 purge working correctly (9,881 records purged on prior run; 0 pending this run)
+✅ CFPB migrations applied — cfpb_trends, cfpb_complaints, cfpb_anomaly_alerts tables exist
+✅ weekly_briefings CFPB columns present — no migration warnings
+⚠  BBB narratives returning 0 samples — narratives expire 48hr after scrape; prior purge cleared all expired narratives; future runs will have samples
+⚠  CFPB detected 0 anomalies — only 293 trend data points from 2-week window; needs 52-week historical baseline to detect anomalies (run fetch_cfpb_historical.py)
+⚠  Step 9 took 24.7 minutes — CFPB API rate-limiting (HTTP 429) on state-level calls causes slow retries; non-blocking, all calls eventually succeed
+
+ANOMALIES DETECTED (BBB)
+------------------------
+CRITICAL : 2
+ALERT    : 5
+WATCH    : 4
+Total    : 11
+
+  CRITICAL — Phishing / NY
+  CRITICAL — Phishing / KY
+  ALERT    — Sweepstakes/Lottery/Prizes / NATIONAL
+  ALERT    — Counterfeit Product / FL
+  ALERT    — Counterfeit Product / WA
+  ALERT    — Online Purchase / MS
+  ALERT    — Phishing / FL
+  WATCH    — Phishing / AZ
+  WATCH    — Travel/Vacation/Timeshare / NATIONAL
+  WATCH    — Phishing / MI
+  WATCH    — Phishing / TN
+
+ANOMALIES DETECTED (CFPB)
+--------------------------
+CRITICAL : 0
+ALERT    : 0
+WATCH    : 0
+Total    : 0
+(Insufficient historical baseline — run fetch_cfpb_historical.py)
+
+REMAINING ACTION
+----------------
+1. Run CFPB historical backfill (in progress)
+   python -X utf8 cfpb/fetch_cfpb_historical.py
+   This populates cfpb_trends with 52 weeks of baseline data so anomaly
+   detection has enough history. Next weekly run will detect CFPB anomalies.
+
+================================================================================
+FULL TERMINAL OUTPUT
+================================================================================
+
+pipeline_run_id: 7
+
+==============================================================================
+STEP 1 - FETCH REPORTS
+==============================================================================
+Starting BBB fetch pipeline...
+Fetching page offset=0 range=2026-04-02..2026-04-09
+Parsed 10 records so far...
+total pages fetched: 1
+total records parsed: 10
+total records upserted: 10
+Sample records (narrative truncated to 150 chars):
+  [1] id=1250021 | Employment | TX | $0 | Salford Property
+  [2] id=1250016 | Identity Theft | IL | $0 | Marquis Secure Processing Centrr
+  [3] id=1250030 | Online Purchase | MA | $68.38 | American Irish Society
+full run timing: 2.40s
+STEP 1 result: fetched=10 saved=10
+STEP 1 - FETCH REPORTS timing: 2.40s
+
+==============================================================================
+STEP 2 - BUILD TRENDS
+==============================================================================
+Pulling bbb_scam_reports from Supabase...
+Loaded 9904 report rows
+Built 1926 aggregated trend rows
+Upserted batch 1: 500 rows
+Upserted batch 2: 500 rows
+Upserted batch 3: 500 rows
+Upserted batch 4: 426 rows
+Build trends summary:
+- source_rows: 9904
+- trend_rows: 1926
+- upserted_rows: 1926
+- elapsed_seconds: 12.16
+STEP 2 result: source_rows=9904 trend_rows=1926 upserted_rows=1926
+STEP 2 - BUILD TRENDS timing: 12.16s
+
+==============================================================================
+STEP 3 - DETECT ANOMALIES
+==============================================================================
+STEP 3 result: total=11 | CRITICAL=2 ALERT=5 WATCH=4
+STEP 3 - DETECT ANOMALIES timing: 4.42s
+
+==============================================================================
+STEP 4 - SAMPLE NARRATIVES
+==============================================================================
+No unexpired narratives exist for this anomaly. Run fetch_reports.py first to populate bbb_scam_reports.
+WARNING: no narratives sampled for Phishing / NY / CRITICAL
+WARNING: no narratives sampled for Phishing / KY / CRITICAL
+SKIPPED (national-level): Sweepstakes/Lottery/Prizes | tier=ALERT
+WARNING: no narratives sampled for Counterfeit Product / FL / ALERT
+WARNING: no narratives sampled for Counterfeit Product / WA / ALERT
+WARNING: no narratives sampled for Online Purchase / MS / ALERT
+WARNING: no narratives sampled for Phishing / FL / ALERT
+WARNING: no narratives sampled for Phishing / AZ / WATCH
+SKIPPED (national-level): Travel/Vacation/Timeshare | tier=WATCH
+WARNING: no narratives sampled for Phishing / MI / WATCH
+WARNING: no narratives sampled for Phishing / TN / WATCH
+STEP 4 result: anomalies_with_narratives=0
+STEP 4 - SAMPLE NARRATIVES timing: 13.84s
+
+==============================================================================
+STEP 5 - WRITE ANOMALY ALERTS
+==============================================================================
+STEP 5 result: anomaly_alerts rows inserted=11
+STEP 5 - WRITE ANOMALY ALERTS timing: 0.16s
+
+==============================================================================
+STEP 6 - GENERATE WEEKLY BRIEFING
+==============================================================================
+Generating briefing for week ending 2026-04-05
+  CFPB alerts for briefing: 0 (CRITICAL=0, ALERT=0, WATCH=0)
+Weekly briefing generated:
+- week_ending: 2026-04-05
+- alerts_included: 0
+- total_reports_this_week: 0
+- total_reports_last_week: 2968
+- elapsed_seconds: 2.57
+STEP 6 result: week_ending=2026-04-05 alerts_included=0
+STEP 6 - GENERATE WEEKLY BRIEFING timing: 4.41s
+
+==============================================================================
+STEP 7 - PURGE NARRATIVES
+==============================================================================
+BBB dry run summary:
+- records that would be purged: 0
+- oldest narrative_expires_at among them: N/A
+BBB: nothing to purge.
+  [cfpb_complaints] records to purge: 0  oldest: N/A
+CFPB narratives purged: 0
+STEP 7 result: narrative purge completed successfully
+STEP 7 - PURGE NARRATIVES timing: 1.91s
+
+==============================================================================
+STEP 9 - CFPB FETCH TRENDS
+==============================================================================
+Fetching national CFPB trends  (8 categories)
+  [NATIONAL] Payment Fraud                   weeks=3
+  [NATIONAL] Account Takeover                weeks=3
+  [NATIONAL] Debit Card Fraud                weeks=3
+  [NATIONAL] Credit Card Fraud               weeks=0
+  [NATIONAL] Identity Theft                  weeks=0
+  [NATIONAL] Debt Collection Fraud           weeks=3
+  [NATIONAL] Gift Card Scam                  weeks=0
+  [NATIONAL] Predatory Service Scam          weeks=3
+
+Fetching state-level CFPB trends  (51 states x 8 categories = 408 calls)
+  [AL]  total_weeks=4
+  [AK]  total_weeks=1
+  [AZ]  total_weeks=7
+  [AR]  total_weeks=6
+  [CA]  total_weeks=11
+  [CO]  total_weeks=4
+  [CT]  total_weeks=5
+  [DC]  total_weeks=2
+  [DE]  total_weeks=3
+  [FL]  total_weeks=11
+  [GA]  total_weeks=10
+  [HI]  total_weeks=0
+  [ID]  total_weeks=3
+  [IL]  total_weeks=8
+  [IN]  total_weeks=4
+  [IA]  total_weeks=1
+  [KS]  total_weeks=5
+  [KY]  total_weeks=8
+  [LA]  total_weeks=6
+  [ME]  total_weeks=0
+  [MD]  total_weeks=9
+  [MA]  total_weeks=6
+  [MI]  total_weeks=8
+  [MN]  total_weeks=6
+  [MS]  total_weeks=4
+  [MO]  total_weeks=9
+  [MT]  total_weeks=3
+  [NE]  total_weeks=1
+  [NV]  total_weeks=5
+  [NH]  total_weeks=1
+  [NJ]  total_weeks=6
+  [NM]  total_weeks=2
+  [NY]  total_weeks=12
+  [NC]  total_weeks=10
+  [ND]  total_weeks=1
+  [OH]  total_weeks=11
+  [OK]  total_weeks=6
+  [OR]  total_weeks=2
+  [PA]  total_weeks=12
+  [RI]  total_weeks=6
+  [SC]  total_weeks=8
+  [SD]  total_weeks=1
+  [TN]  total_weeks=8
+  [TX]  total_weeks=12
+  [UT]  total_weeks=3
+  [VT]  total_weeks=0
+  [VA]  total_weeks=10
+  [WA]  total_weeks=5
+  [WV]  total_weeks=5
+  [WI]  total_weeks=6
+  [WY]  total_weeks=1
+
+fetch_cfpb_trends complete: total_api_calls=416  total_data_points=293
+STEP 9 result: cfpb_trend_data_points=293
+STEP 9 - CFPB FETCH TRENDS timing: 1484.89s
+
+==============================================================================
+STEP 10 - CFPB BUILD TRENDS
+==============================================================================
+build_cfpb_trends: raw_rows=293  aggregated_rows=293  upserted_rows=293  date_range=2026-03-29 to 2026-04-12
+STEP 10 result: aggregated_rows=293 upserted_rows=293
+STEP 10 - CFPB BUILD TRENDS timing: 2.64s
+
+==============================================================================
+STEP 11 - CFPB DETECT ANOMALIES
+==============================================================================
+STEP 11 result: total=0 | CRITICAL=0 ALERT=0 WATCH=0
+STEP 11 - CFPB DETECT ANOMALIES timing: 4.37s
+
+==============================================================================
+STEP 12 - CFPB FETCH COMPLAINTS
+==============================================================================
+STEP 12 result: no CFPB anomalies, skipping complaint fetch.
+STEP 12 - CFPB FETCH COMPLAINTS timing: 0.00s
+
+==============================================================================
+STEP 13 - CFPB SAMPLE NARRATIVES & SAVE ALERTS
+==============================================================================
+STEP 13 result: no CFPB anomalies, skipping narrative sampling.
+STEP 13 - CFPB SAMPLE NARRATIVES & SAVE ALERTS timing: 0.00s
+
+==============================================================================
+STEP 14 - FINAL REPORT
+==============================================================================
+pipeline_run_timestamp: 2026-04-09T15:07:56.733615Z
+total_runtime_seconds: 1537.49
+step_timing_breakdown_seconds:
+- STEP 1 - FETCH REPORTS: 2.40
+- STEP 2 - BUILD TRENDS: 12.16
+- STEP 3 - DETECT ANOMALIES: 4.42
+- STEP 4 - SAMPLE NARRATIVES: 13.84
+- STEP 5 - WRITE ANOMALY ALERTS: 0.16
+- STEP 6 - GENERATE WEEKLY BRIEFING: 4.41
+- STEP 7 - PURGE NARRATIVES: 1.91
+- STEP 9 - CFPB FETCH TRENDS: 1484.89
+- STEP 10 - CFPB BUILD TRENDS: 2.64
+- STEP 11 - CFPB DETECT ANOMALIES: 4.37
+- STEP 12 - CFPB FETCH COMPLAINTS: 0.00
+- STEP 13 - CFPB SAMPLE NARRATIVES & SAVE ALERTS: 0.00
+total_anomalies_detected_by_tier:
+- CRITICAL: 2
+- ALERT: 5
+- WATCH: 4
+total_anomalies_with_narratives_sampled: 0
+anomalies_with_narratives_ready_for_copilot_studio:
+- (none)
+
+failed_steps: none
+
+==============================================================================
+PIPELINE SUMMARY
+==============================================================================
+No step failures detected.

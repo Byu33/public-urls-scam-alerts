@@ -34,33 +34,8 @@ def get_supabase_client() -> Client:
     return create_client(supabase_url, supabase_key)
 
 
-def determine_sample_size(alert_tier: str, current_count: int) -> int:
-    tier = (alert_tier or "").upper().strip()
-
-    if tier == "CRITICAL":
-        if current_count > 300:
-            return 100
-        if 100 <= current_count <= 300:
-            return 50
-        return 25
-
-    if tier == "ALERT":
-        if current_count > 100:
-            return 50
-        return 25
-
-    return 15
-
-
-def build_batches(narratives: list[str], sample_size_requested: int) -> list[list[str]]:
-    if sample_size_requested == 100:
-        return [narratives[:50], narratives[50:100]]
-    return [narratives]
-
-
-def print_summary(anomaly: dict[str, Any], batches: list[list[str]], sample_size_requested: int) -> None:
-    total_narratives = sum(len(batch) for batch in batches)
-    print("\nNarrative Sampling Summary")
+def print_summary(anomaly: dict[str, Any], narratives: list[str]) -> None:
+    print("\nNarrative Summary")
     print(
         "- anomaly: "
         f"type={anomaly.get('scam_type')} | "
@@ -72,16 +47,9 @@ def print_summary(anomaly: dict[str, Any], batches: list[list[str]], sample_size
         f"scope={anomaly.get('scope')} | "
         f"week_ending={anomaly.get('week_ending')}"
     )
-    print(f"- sample_size_requested: {sample_size_requested}")
-    print(f"- total_narratives_sampled: {total_narratives}")
-    print(f"- batch_count: {len(batches)}")
-
-    for idx, batch in enumerate(batches, start=1):
-        print(f"- batch_{idx}_narratives: {len(batch)}")
-        if not batch:
-            print("  (empty)")
-            continue
-        first_preview = batch[0][:100].replace("\n", " ")
+    print(f"- total_narratives: {len(narratives)}")
+    if narratives:
+        first_preview = narratives[0][:100].replace("\n", " ")
         print(f"  first_narrative_preview_100_chars: {first_preview}")
 
 
@@ -93,13 +61,12 @@ def sample_narratives_for_anomaly(anomaly: dict[str, Any]) -> dict[str, Any] | N
     if not scam_type or not state:
         raise ValueError("Anomaly must include scam_type and state.")
 
-    current_count = int(anomaly.get("current_count", 0) or 0)
-    sample_size_requested = determine_sample_size(str(alert_tier), current_count)
-
     client = get_supabase_client()
 
-    now_utc = datetime.now(timezone.utc)
-    cutoff_date = (date.today() - timedelta(days=14)).isoformat()
+    # Query all narratives for the current week (last 7 days) —
+    # no sample size cap, no expiry filter, just reported_date range.
+    week_start = (date.today() - timedelta(days=7)).isoformat()
+    week_end = date.today().isoformat()
 
     try:
         response = (
@@ -108,11 +75,10 @@ def sample_narratives_for_anomaly(anomaly: dict[str, Any]) -> dict[str, Any] | N
             .eq("scam_type", scam_type)
             .eq("state", state)
             .not_.is_("narrative", "null")
-            .gt("narrative_expires_at", now_utc.isoformat())
             .is_("narrative_purged_at", "null")
-            .gte("reported_date", cutoff_date)
+            .gte("reported_date", week_start)
+            .lte("reported_date", week_end)
             .order("reported_date", desc=True)
-            .limit(sample_size_requested)
             .execute()
         )
     except APIError as exc:
@@ -127,29 +93,20 @@ def sample_narratives_for_anomaly(anomaly: dict[str, Any]) -> dict[str, Any] | N
 
     if not narratives:
         print(
-            "No unexpired narratives exist for this anomaly. "
+            "No narratives found for this anomaly in the current week. "
             "Run fetch_reports.py first to populate bbb_scam_reports."
         )
         return None
 
-    if len(narratives) < sample_size_requested:
-        print(
-            "Warning: fewer narratives found than requested. "
-            f"found={len(narratives)} requested={sample_size_requested}"
-        )
-
-    batches = build_batches(narratives, sample_size_requested)
-
     result = {
         "anomaly": anomaly,
-        "batches": batches,
-        "batch_count": len(batches),
+        "batches": [narratives],
+        "batch_count": 1,
         "total_narratives_sampled": len(narratives),
-        "sample_size_requested": sample_size_requested,
         "alert_tier": alert_tier,
     }
 
-    print_summary(anomaly, batches, sample_size_requested)
+    print_summary(anomaly, narratives)
     return result
 
 
@@ -172,6 +129,5 @@ if __name__ == "__main__":
         print(
             "Returned payload stats: "
             f"batch_count={output['batch_count']} "
-            f"total_narratives_sampled={output['total_narratives_sampled']} "
-            f"sample_size_requested={output['sample_size_requested']}"
+            f"total_narratives_sampled={output['total_narratives_sampled']}"
         )

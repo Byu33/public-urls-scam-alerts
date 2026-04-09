@@ -64,14 +64,17 @@ def batch_update_purge(client: Client, ids: list[str], purged_at_iso: str) -> in
     if not ids:
         return 0
 
-    response = (
-        client.table("bbb_scam_reports")
-        .update({"narrative": None, "narrative_purged_at": purged_at_iso})
-        .in_("id", ids)
-        .execute()
-    )
-    updated_rows = response.data or []
-    return len(updated_rows)
+    total = 0
+    for start in range(0, len(ids), PAGE_SIZE):
+        batch = ids[start : start + PAGE_SIZE]
+        response = (
+            client.table("bbb_scam_reports")
+            .update({"narrative": None, "narrative_purged_at": purged_at_iso})
+            .in_("id", batch)
+            .execute()
+        )
+        total += len(response.data or [])
+    return total
 
 
 def fetch_all_rows(client: Client) -> list[dict[str, Any]]:
@@ -116,11 +119,78 @@ def print_verification_counts(client: Client, now_iso: str) -> None:
     print(f"- records with narrative_expires_at in the future: {active_window}")
 
 
+def _purge_table(
+    client: Any,
+    table_name: str,
+    id_field: str,
+    now_iso: str,
+    dry_run: bool,
+) -> int:
+    """
+    Generic purge: find rows where narrative is not null and narrative_expires_at < now,
+    then null out narrative and set narrative_purged_at.
+
+    Returns number of rows purged (0 in dry-run mode).
+    """
+    rows: list[dict[str, Any]] = []
+    start = 0
+
+    while True:
+        try:
+            response = (
+                client.table(table_name)
+                .select(f"{id_field},narrative_expires_at")
+                .not_.is_("narrative", "null")
+                .lt("narrative_expires_at", now_iso)
+                .range(start, start + PAGE_SIZE - 1)
+                .execute()
+            )
+        except Exception as exc:
+            code = getattr(exc, "code", None)
+            message = str(exc)
+            if code == "PGRST205" or "Could not find the table" in message:
+                return 0
+            raise
+        page = response.data or []
+        rows.extend(page)
+        if len(page) < PAGE_SIZE:
+            break
+        start += PAGE_SIZE
+
+    ids = [str(r.get(id_field)) for r in rows if r.get(id_field) is not None]
+    oldest = None
+    if rows:
+        oldest = min(
+            str(r.get("narrative_expires_at"))
+            for r in rows
+            if r.get("narrative_expires_at") is not None
+        )
+
+    print(f"  [{table_name}] records to purge: {len(ids)}  oldest: {oldest or 'N/A'}")
+
+    if dry_run or not ids:
+        return 0
+
+    purged_at_iso = datetime.now(timezone.utc).isoformat()
+    total_purged = 0
+    for start in range(0, len(ids), PAGE_SIZE):
+        batch = ids[start : start + PAGE_SIZE]
+        response = (
+            client.table(table_name)
+            .update({"narrative": None, "narrative_purged_at": purged_at_iso})
+            .in_(id_field, batch)
+            .execute()
+        )
+        total_purged += len(response.data or [])
+    return total_purged
+
+
 def run_purge(dry_run: bool) -> int:
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
     client = get_supabase_client()
 
+    # ── BBB narratives ─────────────────────────────────────────────────────────
     expired_rows = fetch_expired_records(client, now_iso)
     expired_ids = [str(r.get("id")) for r in expired_rows if r.get("id") is not None]
 
@@ -130,27 +200,38 @@ def run_purge(dry_run: bool) -> int:
             str(r.get("narrative_expires_at")) for r in expired_rows if r.get("narrative_expires_at") is not None
         )
 
-    print("Dry run summary:")
+    print("BBB dry run summary:")
     print(f"- records that would be purged: {len(expired_ids)}")
     print(f"- oldest narrative_expires_at among them: {oldest_expires or 'N/A'}")
 
     if dry_run:
+        # Also show CFPB dry-run count
+        cfpb_count = _purge_table(client, "cfpb_complaints", "id", now_iso, dry_run=True)
+        print(f"CFPB narratives that would be purged: {cfpb_count}")
         print("Dry run mode enabled (--dry-run). Skipping actual purge.")
         return 0
 
-    if not expired_ids:
-        print("Nothing to purge. Exiting cleanly.")
-        return 0
+    bbb_purged = 0
+    if expired_ids:
+        purged_at_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            bbb_purged = batch_update_purge(client, expired_ids, purged_at_iso)
+        except Exception as exc:
+            print(f"BBB purge update operation failed: {exc}")
+            return 1
+        print(f"BBB narratives purged: {bbb_purged}")
+        print_verification_counts(client, datetime.now(timezone.utc).isoformat())
+    else:
+        print("BBB: nothing to purge.")
 
-    purged_at_iso = datetime.now(timezone.utc).isoformat()
+    # ── CFPB narratives ────────────────────────────────────────────────────────
     try:
-        purged_count = batch_update_purge(client, expired_ids, purged_at_iso)
+        cfpb_purged = _purge_table(client, "cfpb_complaints", "id", now_iso, dry_run=False)
+        print(f"CFPB narratives purged: {cfpb_purged}")
     except Exception as exc:
-        print(f"Purge update operation failed: {exc}")
-        return 1
+        print(f"CFPB purge failed: {exc}")
+        # Don't return 1 — BBB purge succeeded; CFPB failure is non-fatal
 
-    print(f"Purged records: {purged_count}")
-    print_verification_counts(client, datetime.now(timezone.utc).isoformat())
     return 0
 
 

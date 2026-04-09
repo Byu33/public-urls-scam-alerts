@@ -16,10 +16,10 @@ from dotenv import load_dotenv
 from supabase import Client, create_client
 
 BASE_URL = "https://www.bbb.org/scamtracker/lookupscam"
-PAGE_SIZE = 50
+PAGE_SIZE = 10
 REQUEST_TIMEOUT_SECONDS = 30
-REQUEST_RETRY_LIMIT = 3
-REQUEST_RETRY_WAIT_SECONDS = 15
+REQUEST_RETRY_LIMIT = 2
+REQUEST_RETRY_WAIT_SECONDS = 3
 PAGE_DELAY_SECONDS = 1
 
 
@@ -104,7 +104,9 @@ def _request_with_retry(
     request_kind: str,
     request_id: str,
     failures: list[str],
-) -> requests.Response | None:
+) -> tuple[requests.Response | None, int | None]:
+    """Returns (response, http_status_if_failed). status is set when giving up after retries."""
+    last_status: int | None = None
     for attempt in range(1, REQUEST_RETRY_LIMIT + 1):
         debug_print(
             f"request kind={request_kind} id={request_id} attempt={attempt} "
@@ -122,14 +124,15 @@ def _request_with_retry(
                 time.sleep(REQUEST_RETRY_WAIT_SECONDS)
                 continue
             failures.append(msg)
-            return None
+            return None, None
 
+        last_status = response.status_code
         if response.status_code == 200:
             debug_print(
                 f"request success kind={request_kind} id={request_id} "
                 f"attempt={attempt} status={response.status_code}"
             )
-            return response
+            return response, None
 
         debug_print(
             f"request non-200 kind={request_kind} id={request_id} "
@@ -142,7 +145,7 @@ def _request_with_retry(
         failures.append(
             f"{request_kind} failed id={request_id} status={response.status_code} after retries"
         )
-    return None
+    return None, last_status
 
 
 def _extract_payload_report(source: dict[str, Any]) -> dict[str, Any] | None:
@@ -168,7 +171,7 @@ def _extract_payload_report(source: dict[str, Any]) -> dict[str, Any] | None:
 def scrape_current_week_reports() -> dict[str, Any]:
     end_date = date.today()
     start_date = end_date - timedelta(days=7)
-    narrative_expires_at = (datetime.now(timezone.utc) + timedelta(hours=48)).isoformat()
+    narrative_expires_at = (datetime.now(timezone.utc) + timedelta(days=8)).isoformat()
 
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; BBBScamScraper/2.0)"})
@@ -183,7 +186,7 @@ def scrape_current_week_reports() -> dict[str, Any]:
         query = f"createdOn={start_date.isoformat()}TO{end_date.isoformat()}&from={offset}"
         print(f"Fetching page offset={offset} range={start_date.isoformat()}..{end_date.isoformat()}")
         debug_print(f"search page start offset={offset} query={query}")
-        response = _request_with_retry(
+        response, fail_http_status = _request_with_retry(
             session=session,
             url=BASE_URL,
             params={"q": query},
@@ -193,8 +196,15 @@ def scrape_current_week_reports() -> dict[str, Any]:
         )
 
         if response is None:
+            # BBB returns 5xx on pages past the last result (e.g. deep offsets); treat as done.
+            if fail_http_status is not None and 500 <= fail_http_status < 600:
+                print(
+                    f"BBB returned HTTP {fail_http_status} at offset={offset}; "
+                    "treating as end of pagination."
+                )
+                break
             debug_print(f"search page skipped offset={offset} after retries")
-            offset += PAGE_SIZE
+            offset += 10
             time.sleep(PAGE_DELAY_SECONDS)
             continue
 
@@ -206,7 +216,7 @@ def scrape_current_week_reports() -> dict[str, Any]:
         except Exception as exc:
             failures.append(f"search_page parse failed offset={offset}: {exc}")
             debug_print(f"search page parse failed offset={offset} error={exc}")
-            offset += PAGE_SIZE
+            offset += 10
             time.sleep(PAGE_DELAY_SECONDS)
             continue
 
@@ -216,7 +226,7 @@ def scrape_current_week_reports() -> dict[str, Any]:
         debug_print(f"search page parsed offset={offset} hits_found={len(hits)}")
         
         if not hits:
-            debug_print(f"pagination stop: no hits at offset={offset}")
+            debug_print(f"pagination stop: empty page at offset={offset}")
             break
 
         for hit in hits:
@@ -244,13 +254,9 @@ def scrape_current_week_reports() -> dict[str, Any]:
                 f"state={record.get('state')} scam_type={record.get('scam_type')}"
             )
 
-        if len(hits) < PAGE_SIZE:
-            debug_print(
-                f"pagination stop: page size {len(hits)} < configured PAGE_SIZE {PAGE_SIZE}"
-            )
-            break
-
-        offset += PAGE_SIZE
+        # Use actual hits count for offset so we don't skip records if
+        # BBB's page size differs from PAGE_SIZE
+        offset += len(hits)
         time.sleep(PAGE_DELAY_SECONDS)
 
     return {

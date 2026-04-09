@@ -92,8 +92,10 @@ def _extract_record(source: dict[str, Any]) -> dict[str, Any]:
 
 def _request_page_with_retry(
     session: requests.Session, week_start: date, week_end: date, offset: int
-) -> requests.Response | None:
+) -> tuple[requests.Response | None, int | None]:
+    """Returns (response, http_status_if_failed after retries)."""
     query = f"createdOn={week_start.isoformat()}TO{week_end.isoformat()}&from={offset}"
+    last_status: int | None = None
 
     for attempt in range(1, REQUEST_RETRY_LIMIT + 1):
         response = session.get(
@@ -101,17 +103,18 @@ def _request_page_with_retry(
             params={"q": query},
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
+        last_status = response.status_code
         debug_print(
             f"request week={week_start}..{week_end} offset={offset} attempt={attempt} status={response.status_code}"
         )
         if response.status_code == 200:
-            return response
+            return response, None
 
         if attempt < REQUEST_RETRY_LIMIT:
             time.sleep(REQUEST_RETRY_WAIT_SECONDS)
 
     debug_print(f"page skipped after retries week={week_start}..{week_end} offset={offset}")
-    return None
+    return None, last_status
 
 
 def scrape_week(session: requests.Session, week_start: date, week_end: date, page_size: int = PAGE_SIZE) -> list[dict[str, Any]]:
@@ -123,8 +126,14 @@ def scrape_week(session: requests.Session, week_start: date, week_end: date, pag
     consecutive_parse_failures = 0
 
     while True:
-        response = _request_page_with_retry(session, week_start, week_end, offset)
+        response, fail_http_status = _request_page_with_retry(session, week_start, week_end, offset)
         if response is None:
+            if fail_http_status is not None and 500 <= fail_http_status < 600:
+                debug_print(
+                    f"5xx ({fail_http_status}) at offset={offset} week={week_start}..{week_end}; "
+                    "end pagination for this week."
+                )
+                break
             consecutive_skipped_pages += 1
             offset += page_size
             time.sleep(PAGE_DELAY_SECONDS)

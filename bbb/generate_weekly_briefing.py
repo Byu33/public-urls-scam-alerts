@@ -12,7 +12,13 @@ from dotenv import load_dotenv
 from postgrest.exceptions import APIError
 from supabase import Client, create_client
 
+from detect_anomalies import sunday_ending_week_containing
+
 PAGE_SIZE = 1000
+
+_CFPB_TABLES_MISSING_WARNING = (
+    "WARNING: cfpb_anomaly_alerts table is missing; CFPB section will be empty."
+)
 
 
 def load_env() -> None:
@@ -37,12 +43,6 @@ def get_supabase_client() -> Client:
             "SUPABASE_SERVICE_ROLE_KEY, SUPABASE_KEY, or SUPABASE_ANON_KEY."
         )
     return create_client(supabase_url, supabase_key)
-
-
-def most_recent_completed_sunday(today: date | None = None) -> date:
-    if today is None:
-        today = date.today()
-    return today - timedelta(days=today.weekday() + 1)
 
 
 def pull_anomaly_alerts_for_week(client: Client, week_ending: str) -> list[dict[str, Any]]:
@@ -119,6 +119,161 @@ def pull_recent_scam_types(client: Client, week_ending: str) -> set[str]:
     return {str(r.get("scam_type")) for r in rows if r.get("scam_type")}
 
 
+def pull_cfpb_alerts_for_week(client: Client, week_ending: str) -> list[dict[str, Any]]:
+    """Pull CFPB anomaly alerts for the current week, gracefully handling missing table."""
+    rows: list[dict[str, Any]] = []
+    start = 0
+    while True:
+        try:
+            response = (
+                client.table("cfpb_anomaly_alerts")
+                .select(
+                    "id,week_ending,product,issue,state,alert_tier,scope,"
+                    "detection_level,current_count,short_deviation,long_deviation,"
+                    "top_company,brands_mentioned,dominant_brand"
+                )
+                .eq("week_ending", week_ending)
+                .range(start, start + PAGE_SIZE - 1)
+                .execute()
+            )
+        except APIError as exc:
+            code = getattr(exc, "code", None)
+            message = str(exc)
+            if code == "PGRST205" or "Could not find the table" in message:
+                print(_CFPB_TABLES_MISSING_WARNING)
+                return []
+            raise
+        page = response.data or []
+        rows.extend(page)
+        if len(page) < PAGE_SIZE:
+            break
+        start += PAGE_SIZE
+    return rows
+
+
+def _build_cfpb_stats(
+    cfpb_alerts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compute CFPB summary stats from alert rows."""
+    if not cfpb_alerts:
+        return {
+            "cfpb_critical_count": 0,
+            "cfpb_alert_count": 0,
+            "cfpb_watch_count": 0,
+            "top_cfpb_companies": "",
+            "cfpb_top_finding": "No CFPB anomaly alerts were generated this week.",
+        }
+
+    critical = sum(1 for a in cfpb_alerts if str(a.get("alert_tier", "")).upper() == "CRITICAL")
+    alert = sum(1 for a in cfpb_alerts if str(a.get("alert_tier", "")).upper() == "ALERT")
+    watch = sum(1 for a in cfpb_alerts if str(a.get("alert_tier", "")).upper() == "WATCH")
+
+    # Top companies by frequency across all alerts
+    company_counter: Counter = Counter()
+    for a in cfpb_alerts:
+        for field in ("top_company", "dominant_brand"):
+            val = a.get(field)
+            if val and str(val).strip():
+                company_counter[str(val).strip()] += 1
+    top_companies_list = [c for c, _ in company_counter.most_common(5)]
+    top_cfpb_companies = ", ".join(top_companies_list) if top_companies_list else ""
+
+    # Top finding: highest severity alert
+    sorted_alerts = sorted(
+        cfpb_alerts,
+        key=lambda a: (
+            {"CRITICAL": 0, "ALERT": 1, "WATCH": 2}.get(
+                str(a.get("alert_tier", "WATCH")).upper(), 9
+            ),
+            -float(a.get("short_deviation", 0) or 0),
+        ),
+    )
+    top = sorted_alerts[0]
+    cfpb_top_finding = (
+        f"{top.get('alert_tier', 'WATCH')} — "
+        f"{top.get('product', '')} / {top.get('issue', '')} "
+        f"in {top.get('state') or 'NATIONAL'} "
+        f"(count={top.get('current_count', 0)}, "
+        f"company={top.get('top_company') or 'unknown'})"
+    )
+
+    return {
+        "cfpb_critical_count": critical,
+        "cfpb_alert_count": alert,
+        "cfpb_watch_count": watch,
+        "top_cfpb_companies": top_cfpb_companies,
+        "cfpb_top_finding": cfpb_top_finding,
+    }
+
+
+def _find_combined_signals(
+    bbb_alerts: list[dict[str, Any]],
+    cfpb_alerts: list[dict[str, Any]],
+) -> list[str]:
+    """
+    Identify scam types or brands appearing in BOTH BBB and CFPB data this week.
+    Returns a list of human-readable signal descriptions.
+    """
+    signals: list[str] = []
+
+    # BBB scam types that have alerts
+    bbb_scam_types = {
+        str(a.get("scam_type", "")).lower()
+        for a in bbb_alerts
+        if a.get("scam_type")
+    }
+
+    # CFPB products/issues that have alerts
+    cfpb_issues = {
+        str(a.get("issue", "")).lower()
+        for a in cfpb_alerts
+        if a.get("issue")
+    }
+
+    # Cross-source type overlap (loose keyword match)
+    OVERLAP_MAP = {
+        "identity theft": ["identity theft", "getting a credit card"],
+        "phishing": ["fraud or scam"],
+        "investment": ["fraud or scam"],
+        "online purchase": ["problem with a purchase shown on your statement",
+                            "problem with a purchase or transfer"],
+        "romance": ["fraud or scam"],
+        "government agency imposter": ["fraud or scam", "false statements or representation"],
+    }
+    for bbb_type, cfpb_keywords in OVERLAP_MAP.items():
+        if bbb_type in bbb_scam_types:
+            for keyword in cfpb_keywords:
+                if keyword in cfpb_issues:
+                    signals.append(
+                        f"{bbb_type.title()} (BBB) ↔ {keyword.title()} (CFPB) — "
+                        "same scam type flagged in both datasets"
+                    )
+                    break
+
+    # Brand overlap: brands in BBB alerts also appearing in CFPB top companies
+    bbb_brands: set[str] = set()
+    for a in bbb_alerts:
+        for field in ("brands_mentioned", "dominant_brand"):
+            val = a.get(field)
+            if val:
+                bbb_brands.update(b.strip().lower() for b in str(val).split(",") if b.strip())
+
+    cfpb_brands: set[str] = set()
+    for a in cfpb_alerts:
+        for field in ("top_company", "dominant_brand", "brands_mentioned"):
+            val = a.get(field)
+            if val:
+                cfpb_brands.update(b.strip().lower() for b in str(val).split(",") if b.strip())
+
+    shared_brands = bbb_brands & cfpb_brands - {""}
+    for brand in sorted(shared_brands):
+        signals.append(
+            f"Brand '{brand}' flagged in both BBB consumer reports and CFPB financial complaints"
+        )
+
+    return signals
+
+
 def build_markdown(
     week_ending: str,
     alerts: list[dict[str, Any]],
@@ -131,14 +286,29 @@ def build_markdown(
     national_flags: list[dict[str, Any]],
     top_finding_summary: str,
     national_summary: str,
+    cfpb_stats: dict[str, Any] | None = None,
+    combined_signals: list[str] | None = None,
 ) -> str:
     critical = [a for a in alerts if str(a.get("alert_tier", "")).upper() == "CRITICAL"]
     alert = [a for a in alerts if str(a.get("alert_tier", "")).upper() == "ALERT"]
     watch = [a for a in alerts if str(a.get("alert_tier", "")).upper() == "WATCH"]
 
+    cfpb = cfpb_stats or {}
+    signals = combined_signals or []
+
     lines: list[str] = []
-    lines.append(f"# BBB Weekly Scam Briefing ({week_ending})")
+    lines.append(f"# Weekly Scam Intelligence Briefing ({week_ending})")
     lines.append("")
+
+    # ── Combined signals (highest confidence cross-source detections) ──────────
+    if signals:
+        lines.append("## ⚠ Combined Signals — Cross-Source Detections")
+        lines.append("*These signals appear in BOTH BBB consumer reports and CFPB financial complaints.*")
+        lines.append("*Two independent data sources confirming the same active campaign — highest confidence.*")
+        lines.append("")
+        for sig in signals:
+            lines.append(f"- {sig}")
+        lines.append("")
 
     lines.append("## Week at a Glance")
     lines.append(f"- {top_finding_summary}")
@@ -219,6 +389,21 @@ def build_markdown(
     lines.append(f"- This week: {total_reports_this_week}")
     lines.append(f"- Last week: {total_reports_last_week}")
     lines.append(f"- Change: {week_over_week_change:+.2f}%")
+    lines.append("")
+
+    # ── CFPB section ────────────────────────────────────────────────────────────
+    lines.append("## CFPB Financial Complaint Alerts")
+    if cfpb:
+        lines.append(
+            f"- CRITICAL: {cfpb.get('cfpb_critical_count', 0)}  "
+            f"ALERT: {cfpb.get('cfpb_alert_count', 0)}  "
+            f"WATCH: {cfpb.get('cfpb_watch_count', 0)}"
+        )
+        if cfpb.get("top_cfpb_companies"):
+            lines.append(f"- Top companies: {cfpb['top_cfpb_companies']}")
+        lines.append(f"- Top finding: {cfpb.get('cfpb_top_finding', 'None')}")
+    else:
+        lines.append("- CFPB data not available this week")
 
     return "\n".join(lines)
 
@@ -227,7 +412,7 @@ def generate_weekly_briefing() -> dict[str, Any]:
     started_at = time.time()
     client = get_supabase_client()
 
-    current_week_date = most_recent_completed_sunday()
+    current_week_date = sunday_ending_week_containing()
     previous_week_date = current_week_date - timedelta(days=7)
     current_week = current_week_date.isoformat()
     previous_week = previous_week_date.isoformat()
@@ -315,6 +500,20 @@ def generate_weekly_briefing() -> dict[str, Any]:
     else:
         national_summary = "No national-level anomalies were flagged this week."
 
+    # ── CFPB data ──────────────────────────────────────────────────────────────
+    cfpb_alerts = pull_cfpb_alerts_for_week(client, current_week)
+    cfpb_stats = _build_cfpb_stats(cfpb_alerts)
+    combined_signals = _find_combined_signals(alerts, cfpb_alerts)
+
+    print(
+        f"  CFPB alerts for briefing: {len(cfpb_alerts)} "
+        f"(CRITICAL={cfpb_stats['cfpb_critical_count']}, "
+        f"ALERT={cfpb_stats['cfpb_alert_count']}, "
+        f"WATCH={cfpb_stats['cfpb_watch_count']})"
+    )
+    if combined_signals:
+        print(f"  Combined signals found: {len(combined_signals)}")
+
     briefing_markdown = build_markdown(
         week_ending=current_week,
         alerts=alerts,
@@ -327,6 +526,8 @@ def generate_weekly_briefing() -> dict[str, Any]:
         national_flags=national_flags,
         top_finding_summary=top_finding_summary,
         national_summary=national_summary,
+        cfpb_stats=cfpb_stats,
+        combined_signals=combined_signals,
     )
 
     payload = {
@@ -342,17 +543,36 @@ def generate_weekly_briefing() -> dict[str, Any]:
         "national_flags": national_flags,
         "top_finding_summary": top_finding_summary,
         "national_summary": national_summary,
+        "cfpb_critical_count": cfpb_stats["cfpb_critical_count"],
+        "cfpb_alert_count": cfpb_stats["cfpb_alert_count"],
+        "cfpb_watch_count": cfpb_stats["cfpb_watch_count"],
+        "top_cfpb_companies": cfpb_stats["top_cfpb_companies"],
+        "cfpb_top_finding": cfpb_stats["cfpb_top_finding"],
     }
 
-    try:
-        client.table("weekly_briefings").insert(payload).execute()
-    except APIError as exc:
-        code = getattr(exc, "code", None)
-        message = str(exc)
-        if code == "PGRST205" or "Could not find the table" in message:
-            print("WARNING: weekly_briefings table is missing; skipping briefing insert.")
-        else:
-            raise
+    _CFPB_COLS = {"cfpb_critical_count", "cfpb_alert_count", "cfpb_watch_count",
+                  "top_cfpb_companies", "cfpb_top_finding"}
+
+    def _insert_briefing(row: dict[str, Any]) -> None:
+        try:
+            client.table("weekly_briefings").insert(row).execute()
+        except APIError as exc:
+            code = getattr(exc, "code", None)
+            message = str(exc)
+            if code == "PGRST205" or "Could not find the table" in message:
+                print("WARNING: weekly_briefings table is missing; skipping briefing insert.")
+            elif code == "PGRST204" or "Could not find the column" in message:
+                # CFPB migration not yet run; retry without CFPB columns
+                print(
+                    "WARNING: weekly_briefings missing CFPB columns; "
+                    "run migration 20260408000001. Retrying insert without CFPB fields."
+                )
+                row_without_cfpb = {k: v for k, v in row.items() if k not in _CFPB_COLS}
+                client.table("weekly_briefings").insert(row_without_cfpb).execute()
+            else:
+                raise
+
+    _insert_briefing(payload)
 
     elapsed = time.time() - started_at
     print("Weekly briefing generated:")

@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python run_pipeline.py)",
+      "Bash(cmd /c \"dir /a \\\\\"c:\\\\Users\\\\eliza\\\\Desktop\\\\AIP Scam Alerts\\\\public-urls-scam-alerts\\\\\" | findstr /i env\")",
+      "Bash(cmd /c \"dir /a /b \\\\\"c:\\\\Users\\\\eliza\\\\Desktop\\\\AIP Scam Alerts\\\\\"\")",
+      "Bash(cmd /c \"dir /a /b \\\\\"c:\\\\Users\\\\eliza\\\\Desktop\\\\AIP Scam Alerts\\\\public-urls-scam-alerts\\\\\"\")",
+      "Bash(python -c \"import os; files = os.listdir\\(r'c:\\\\Users\\\\eliza\\\\Desktop\\\\AIP Scam Alerts\\\\public-urls-scam-alerts'\\); print\\([f for f in files if 'env' in f.lower\\(\\) or f.startswith\\('.'\\)]\\)\")",
+      "Bash(python -c \"import socket; socket.getaddrinfo\\('cvfsavzfohdwiowxqain.supabase.co', 443\\)\")",
+      "Bash(python -c \"import socket; socket.getaddrinfo\\('google.com', 443\\)\")",
+      "Bash(python -c \"import socket; print\\(socket.getaddrinfo\\('google.com', 443\\)\\)\")",
+      "Bash(python -c ':*)",
+      "Bash(pip install:*)",
+      "Bash(python -c \"import psycopg2; print\\('psycopg2 ready:', psycopg2.__version__\\)\")",
+      "Bash(python -c \"import socket; socket.getaddrinfo\\('aws-0-us-east-1.pooler.supabase.com', 5432\\)\")",
+      "Bash(python -c \"print\\(socket.getaddrinfo\\('aws-0-us-east-1.pooler.supabase.com', 5432\\)\\)\")",
+      "Bash(python -c \"import socket; print\\(socket.getaddrinfo\\('aws-0-us-east-1.pooler.supabase.com', 5432\\)\\)\")",
+      "Bash(npm --version)",
+      "Bash(npm install:*)",
+      "Bash(scoop --version)",
+      "Bash(scoop install:*)",
+      "Bash(supabase --version)",
+      "Bash(supabase db:*)",
+      "Bash(supabase login:*)",
+      "Bash(supabase link:*)",
+      "Bash(python fetch_cfpb_historical.py)",
+      "Bash(python -X utf8 fetch_cfpb_historical.py)",
+      "WebFetch(domain:cfpb.github.io)",
+      "WebFetch(domain:www.consumerfinance.gov)",
+      "Bash(python bbb/run_pipeline.py)",
+      "Bash(python -c \"import requests; r = requests.get\\('https://www.consumerfinance.gov/data-research/consumer-complaints/search/api/v1/', params={'product': 'Debt collection', 'issue': 'False statements or representation', 'date_received_min': '2026-01-01', 'date_received_max': '2026-01-07', 'no_aggs': 'true', 'format': 'json', 'size': 5}, timeout=15\\); print\\(r.status_code\\)\")",
+      "Bash(python -X utf8 cfpb/fetch_cfpb_historical.py)",
+      "Bash(python bbb/run_pipeline.py --bbb-only)",
+      "Bash(start cmd:*)"
+    ]
+  }
+}
