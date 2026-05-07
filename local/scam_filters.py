@@ -267,7 +267,7 @@ def normalize_text(value: Any) -> str:
 
 def _contains(text_lower: str, needle: str) -> bool:
     needle_lower = needle.lower()
-    if needle_lower in {"irs", "ssa", "dea", "fbi"}:
+    if needle_lower in {"irs", "ssa", "dea", "fbi", "warrant"}:
         return re.search(rf"\b{re.escape(needle_lower)}\b", text_lower) is not None
     return needle_lower in text_lower
 
