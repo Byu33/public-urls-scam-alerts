@@ -132,6 +132,10 @@ def pull_cfpb_trends(client: Client) -> pd.DataFrame:
 
 def _safe_deviation(value: float, mean: float, std: float) -> float:
     if pd.isna(std) or std <= 0:
+        if value > mean:
+            return 999.0
+        if value < mean:
+            return -999.0
         return 0.0
     return (value - mean) / std
 
