@@ -1,184 +1,160 @@
 from __future__ import annotations
 
 import os
-from collections import defaultdict
-from datetime import date, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 from dotenv import load_dotenv
+from postgrest.exceptions import APIError
 from supabase import Client, create_client
 
-UPSERT_BATCH_SIZE = 500
+from fetch_trends import CFPB_SCAM_CATEGORIES
 
 
-# ── Supabase connection ────────────────────────────────────────────────────────
+PAGE_SIZE = 1000
+
 
 def get_supabase_client() -> Client:
     repo_root = Path(__file__).resolve().parent.parent
     load_dotenv(repo_root / ".env.local")
     load_dotenv(repo_root / ".env")
-    load_dotenv()
-
     url = os.getenv("SUPABASE_URL")
-    key = (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or os.getenv("SUPABASE_KEY")
-        or os.getenv("SUPABASE_ANON_KEY")
-    )
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY")
     if not url or not key:
-        raise ValueError(
-            "Missing Supabase credentials. Set SUPABASE_URL and one of "
-            "SUPABASE_SERVICE_ROLE_KEY, SUPABASE_KEY, or SUPABASE_ANON_KEY."
-        )
+        raise ValueError("Missing SUPABASE_URL and Supabase service/anon key.")
     return create_client(url, key)
 
 
-# ── Week-ending calculation ────────────────────────────────────────────────────
+def pull_cfpb_trends(client: Client) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    start = 0
+    while True:
+        response = (
+            client.table("cfpb_trends")
+            .select("week_ending,product,issue,scam_type,priority,state,report_count")
+            .range(start, start + PAGE_SIZE - 1)
+            .execute()
+        )
+        page = response.data or []
+        rows.extend(page)
+        if len(page) < PAGE_SIZE:
+            break
+        start += PAGE_SIZE
 
-def to_sunday(d: date) -> date:
-    """Return the Sunday that ends the week containing date d."""
-    days_to_sunday = (6 - d.weekday()) % 7
-    return d + timedelta(days=days_to_sunday)
+    if not rows:
+        return pd.DataFrame(columns=["week_ending", "product", "issue", "scam_type", "priority", "state", "report_count"])
 
-
-def _none_if_missing(value: Any) -> Any:
-    return None if pd.isna(value) else value
-
-
-# ── Aggregation ────────────────────────────────────────────────────────────────
-
-def aggregate_trend_rows(raw_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """
-    Aggregate raw trend rows into (week_ending, product, issue, state) buckets.
-
-    The CFPB API may return multiple bucket entries that map to the same
-    Sunday week_ending (e.g., when date_min falls mid-week). This step
-    de-duplicates by summing report_count per unique key.
-    """
-    if not raw_rows:
-        return []
-
-    df = pd.DataFrame(raw_rows)
-    df["week_ending"] = pd.to_datetime(df["week_ending"], errors="coerce").dt.date
-
-    # Apply Sunday normalisation to any rows that weren't already normalised
-    df["week_ending"] = df["week_ending"].apply(
-        lambda d: to_sunday(d) if pd.notna(d) else d
-    )
-
+    df = pd.DataFrame(rows)
+    df["week_ending"] = pd.to_datetime(df["week_ending"], errors="coerce")
     df["report_count"] = pd.to_numeric(df["report_count"], errors="coerce").fillna(0).astype(int)
+    return df
 
-    # Keep first non-null sub_product per (week_ending, product, issue, state)
-    sub_product_map: dict[tuple, str | None] = {}
-    for _, row in df.iterrows():
-        key = (row["week_ending"], row["product"], row["issue"], row["state"])
-        if key not in sub_product_map:
-            sub_product_map[key] = _none_if_missing(row.get("sub_product"))
 
-    agg = (
-        df.groupby(["week_ending", "product", "issue", "state"], dropna=False)["report_count"]
+def summarize_cfpb_trends(df: pd.DataFrame) -> dict[str, Any]:
+    expected_categories = [str(category["scam_type"]) for category in CFPB_SCAM_CATEGORIES]
+    if df.empty:
+        return {
+            "total_rows": 0,
+            "distinct_weeks": 0,
+            "distinct_categories": 0,
+            "date_range": None,
+            "top_categories": [],
+            "zero_record_weeks": [],
+            "data_quality_issues": ["No CFPB trend rows found."],
+            "category_row_counts": {},
+        }
+
+    df = df[df["scam_type"].notna()].copy()
+    total_rows = int(len(df))
+    distinct_weeks = int(df["week_ending"].nunique())
+    distinct_categories = int(df["scam_type"].nunique())
+    date_range = f"{df['week_ending'].min().date().isoformat()} to {df['week_ending'].max().date().isoformat()}"
+
+    top_categories_df = (
+        df[df["state"] == "NATIONAL"]
+        .groupby("scam_type", dropna=False)["report_count"]
         .sum()
+        .sort_values(ascending=False)
+        .head(5)
         .reset_index()
     )
+    top_categories = [
+        {"scam_type": str(row["scam_type"]), "total_complaints": int(row["report_count"])}
+        for _, row in top_categories_df.iterrows()
+    ]
 
-    result: list[dict[str, Any]] = []
-    for _, row in agg.iterrows():
-        key = (row["week_ending"], row["product"], row["issue"], row["state"])
-        result.append(
-            {
-                "week_ending": row["week_ending"].isoformat() if pd.notna(row["week_ending"]) else None,
-                "product": str(row["product"]),
-                "sub_product": _none_if_missing(sub_product_map.get(key)),
-                "issue": str(row["issue"]),
-                "state": str(row["state"]),
-                "report_count": int(row["report_count"]),
-            }
-        )
+    weekly_totals = df[df["state"] == "NATIONAL"].groupby("week_ending")["report_count"].sum()
+    full_weeks = pd.date_range(df["week_ending"].min(), df["week_ending"].max(), freq="7D")
+    zero_record_weeks = [
+        week.date().isoformat()
+        for week in full_weeks
+        if int(weekly_totals.get(week, 0) or 0) == 0
+    ]
 
-    return result
-
-
-# ── Upsert ─────────────────────────────────────────────────────────────────────
-
-def upsert_cfpb_trends(client: Client, rows: list[dict[str, Any]]) -> int:
-    """Upsert aggregated rows to cfpb_trends in batches of UPSERT_BATCH_SIZE."""
-    if not rows:
-        return 0
-
-    # Remove rows with null week_ending (can't upsert without the key)
-    valid_rows = [r for r in rows if r.get("week_ending")]
-    skipped = len(rows) - len(valid_rows)
-    if skipped:
-        print(f"  Skipped {skipped} rows with null week_ending")
-
-    upserted = 0
-    for start in range(0, len(valid_rows), UPSERT_BATCH_SIZE):
-        batch = valid_rows[start : start + UPSERT_BATCH_SIZE]
-        client.table("cfpb_trends").upsert(
-            batch,
-            on_conflict="week_ending,product,issue,state",
-        ).execute()
-        upserted += len(batch)
-
-    return upserted
-
-
-# ── Main entry point ───────────────────────────────────────────────────────────
-
-def build_cfpb_trends(trend_data: list[dict[str, Any]]) -> dict[str, Any]:
-    """
-    Aggregate raw trend rows and upsert to cfpb_trends.
-
-    Parameters
-    ----------
-    trend_data : list of dicts from fetch_cfpb_trends()
-
-    Returns
-    -------
-    dict with keys: raw_rows, aggregated_rows, upserted_rows, date_range
-    """
-    if not trend_data:
-        print("build_cfpb_trends: no trend data provided, nothing to upsert.")
-        return {"raw_rows": 0, "aggregated_rows": 0, "upserted_rows": 0, "date_range": None}
-
-    aggregated = aggregate_trend_rows(trend_data)
-    if not aggregated:
-        print("build_cfpb_trends: aggregation produced no rows.")
-        return {"raw_rows": len(trend_data), "aggregated_rows": 0, "upserted_rows": 0, "date_range": None}
-
-    client = get_supabase_client()
-    upserted = upsert_cfpb_trends(client, aggregated)
-
-    week_endings = [r["week_ending"] for r in aggregated if r.get("week_ending")]
-    date_range = f"{min(week_endings)} to {max(week_endings)}" if week_endings else None
-
-    print(
-        f"build_cfpb_trends: raw_rows={len(trend_data)}  "
-        f"aggregated_rows={len(aggregated)}  "
-        f"upserted_rows={upserted}  "
-        f"date_range={date_range}"
+    category_row_counts = (
+        df[df["state"] == "NATIONAL"]
+        .groupby("scam_type")["week_ending"]
+        .nunique()
+        .reindex(expected_categories, fill_value=0)
+        .astype(int)
+        .to_dict()
     )
+
+    issues: list[str] = []
+    missing = [category for category in expected_categories if category_row_counts.get(category, 0) == 0]
+    if missing:
+        issues.append("Missing expected CFPB categories: " + ", ".join(missing))
+    low_history = [category for category, count in category_row_counts.items() if count < 16]
+    if low_history:
+        issues.append("Categories with fewer than 16 national weeks: " + ", ".join(low_history))
+    if zero_record_weeks:
+        issues.append(f"Weeks with zero national records across all categories: {len(zero_record_weeks)}")
+    if df[["week_ending", "product", "issue", "scam_type", "state"]].isna().any().any():
+        issues.append("Null values found in required CFPB trend dimensions.")
+
     return {
-        "raw_rows": len(trend_data),
-        "aggregated_rows": len(aggregated),
-        "upserted_rows": upserted,
+        "total_rows": total_rows,
+        "distinct_weeks": distinct_weeks,
+        "distinct_categories": distinct_categories,
         "date_range": date_range,
+        "top_categories": top_categories,
+        "zero_record_weeks": zero_record_weeks,
+        "data_quality_issues": issues,
+        "category_row_counts": category_row_counts,
     }
 
 
-def main(trend_data: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    if trend_data is None:
-        # Standalone mode: fetch first then build
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from fetch_trends import fetch_cfpb_trends
-        trend_data = fetch_cfpb_trends()
-    return build_cfpb_trends(trend_data)
+def build_cfpb_trends(_: list[dict[str, Any]] | dict[str, Any] | None = None) -> dict[str, Any]:
+    client = get_supabase_client()
+    try:
+        df = pull_cfpb_trends(client)
+    except APIError as exc:
+        raise RuntimeError("Unable to query cfpb_trends. Apply CFPB scam pipeline migration first.") from exc
+    summary = summarize_cfpb_trends(df)
+
+    print("\nCFPB trends table summary")
+    print(f"- Total rows: {summary['total_rows']}")
+    print(f"- Distinct weeks: {summary['distinct_weeks']}")
+    print(f"- Distinct categories: {summary['distinct_categories']}")
+    print(f"- Date range: {summary['date_range']}")
+    print("- Top 5 categories by total complaint count:")
+    for row in summary["top_categories"]:
+        print(f"  - {row['scam_type']}: {row['total_complaints']}")
+    print("- Weeks with zero records across all categories:")
+    print("  - " + (", ".join(summary["zero_record_weeks"]) if summary["zero_record_weeks"] else "None"))
+    print("- Data quality issues:")
+    print("  - " + ("; ".join(summary["data_quality_issues"]) if summary["data_quality_issues"] else "None"))
+    print("- Row count by scam_type:")
+    for scam_type, count in summary["category_row_counts"].items():
+        print(f"  - {scam_type}: {count}")
+    return summary
+
+
+def main() -> dict[str, Any]:
+    return build_cfpb_trends()
 
 
 if __name__ == "__main__":
-    result = main()
-    print(result)
+    main()

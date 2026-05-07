@@ -3,154 +3,155 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import date, timedelta
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 from dotenv import load_dotenv
+from postgrest.exceptions import APIError
 from supabase import Client, create_client
 
-# ── Import STATE_TIERS from BBB detect_anomalies ──────────────────────────────
-# cfpb/ sits one level below repo root; bbb/ is a sibling directory.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT / "bbb") not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT / "bbb"))
+if str(_REPO_ROOT / "cfpb") not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT / "cfpb"))
 
 from detect_anomalies import STATE_TIERS  # noqa: E402
+from fetch_trends import CFPB_SCAM_CATEGORIES  # noqa: E402
 
 
-# ── Configuration ──────────────────────────────────────────────────────────────
-
-LOOKBACK_WEEKS = 24
 SHORT_WINDOW = 8
 LONG_WINDOW = 16
-DEVIATION_THRESHOLD = 1.2
-HIGH_DEVIATION = 2.0
-
-NATIONAL_SHORT_WINDOW = 8
-NATIONAL_LONG_WINDOW = 16
-
+WATCH_THRESHOLD = 1.2
+ALERT_THRESHOLD = 2.0
+CRITICAL_THRESHOLD = 2.5
+MIN_STATE_FLOOR = 5
 DEFAULT_STATE_TIER = 4
-MIN_FLOOR = 8
+PAGE_SIZE = 1000
+UPSERT_BATCH_SIZE = 500
 
 CFPB_NATIONAL_FLOORS: dict[str, int] = {
-    "Payment Fraud":          200,
-    "Account Takeover":       150,
-    "Debit Card Fraud":       100,
-    "Credit Card Fraud":      175,
-    "Identity Theft":         125,
-    "Debt Collection Fraud":   80,
-    "Gift Card Scam":          40,
-    "Predatory Service Scam":  30,
-    "default":                 75,
+    "Government Impersonation Debt Collection": 15,
+    "Illegal Debt Collection Threats": 20,
+    "Phantom Debt Identity Theft": 75,
+    "Credit Card Identity Theft": 40,
+    "Unauthorized Card Charges": 30,
+    "Account Takeover Unauthorized Charges": 50,
+    "Fraudulent Account Opening": 15,
+    "Explicit Fraud or Scam": 60,
+    "Predatory Service Advance Fee": 10,
+    "Predatory Upfront Fee Scam": 10,
+    "Fraudulent Loan": 15,
+    "Student Loan Relief Scam": 10,
+    "Payment Transfer Fraud": 75,
+    "Prepaid Card Purchase Fraud": 15,
+    "Digital Wallet Account Takeover": 25,
+    "Unauthorized Loan Identity Theft": 10,
+    "default": 25,
 }
 
-# Six-tier state floors keyed by scam_type, values are [T1, T2, T3, T4, T5, T6]
 CFPB_STATE_FLOORS: dict[str, list[int]] = {
-    "Payment Fraud":          [40, 20, 10, 8, 8, 8],
-    "Account Takeover":       [30, 15, 10, 8, 8, 8],
-    "Debit Card Fraud":       [20, 12,  8, 8, 8, 8],
-    "Credit Card Fraud":      [35, 18, 10, 8, 8, 8],
-    "Identity Theft":         [25, 12,  8, 8, 8, 8],
-    "Debt Collection Fraud":  [16, 10,  8, 8, 8, 8],
-    "Gift Card Scam":         [10,  8,  8, 8, 8, 8],
-    "Predatory Service Scam": [ 8,  8,  8, 8, 8, 8],
-    "default":                [15,  8,  8, 8, 8, 8],
+    "Government Impersonation Debt Collection": [8, 6, 5, 5, 5, 5],
+    "Illegal Debt Collection Threats": [8, 6, 5, 5, 5, 5],
+    "Phantom Debt Identity Theft": [20, 12, 8, 6, 5, 5],
+    "Credit Card Identity Theft": [15, 10, 7, 5, 5, 5],
+    "Unauthorized Card Charges": [12, 8, 6, 5, 5, 5],
+    "Account Takeover Unauthorized Charges": [15, 10, 7, 5, 5, 5],
+    "Fraudulent Account Opening": [8, 6, 5, 5, 5, 5],
+    "Explicit Fraud or Scam": [20, 12, 8, 6, 5, 5],
+    "Predatory Service Advance Fee": [6, 5, 5, 5, 5, 5],
+    "Predatory Upfront Fee Scam": [6, 5, 5, 5, 5, 5],
+    "Fraudulent Loan": [8, 6, 5, 5, 5, 5],
+    "Student Loan Relief Scam": [6, 5, 5, 5, 5, 5],
+    "Payment Transfer Fraud": [25, 15, 10, 7, 5, 5],
+    "Prepaid Card Purchase Fraud": [8, 6, 5, 5, 5, 5],
+    "Digital Wallet Account Takeover": [10, 7, 5, 5, 5, 5],
+    "Unauthorized Loan Identity Theft": [6, 5, 5, 5, 5, 5],
+    "default": [10, 7, 5, 5, 5, 5],
 }
 
 TIER_ORDER = {"CRITICAL": 0, "ALERT": 1, "WATCH": 2}
 
 
-# ── Supabase connection ────────────────────────────────────────────────────────
-
 def get_supabase_client() -> Client:
-    repo_root = Path(__file__).resolve().parent.parent
-    load_dotenv(repo_root / ".env.local")
-    load_dotenv(repo_root / ".env")
-    load_dotenv()
-
+    load_dotenv(_REPO_ROOT / ".env.local")
+    load_dotenv(_REPO_ROOT / ".env")
     url = os.getenv("SUPABASE_URL")
-    key = (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or os.getenv("SUPABASE_KEY")
-        or os.getenv("SUPABASE_ANON_KEY")
-    )
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY")
     if not url or not key:
-        raise ValueError(
-            "Missing Supabase credentials. Set SUPABASE_URL and one of "
-            "SUPABASE_SERVICE_ROLE_KEY, SUPABASE_KEY, or SUPABASE_ANON_KEY."
-        )
+        raise ValueError("Missing SUPABASE_URL and Supabase service/anon key.")
     return create_client(url, key)
 
 
-# ── Data loading ───────────────────────────────────────────────────────────────
+def _category_map() -> dict[str, dict[str, Any]]:
+    return {str(category["scam_type"]): category for category in CFPB_SCAM_CATEGORIES}
 
-def pull_cfpb_trends(client: Client) -> pd.DataFrame:
-    cutoff = (date.today() - timedelta(weeks=LOOKBACK_WEEKS)).isoformat()
-    days_since_last_sunday = date.today().weekday() + 1
-    last_sunday = (date.today() - timedelta(days=days_since_last_sunday)).isoformat()
-
-    rows: list[dict[str, Any]] = []
-    page_size = 1000
-    offset = 0
-
-    while True:
-        response = (
-            client.table("cfpb_trends")
-            .select("week_ending,product,issue,state,report_count")
-            .gte("week_ending", cutoff)
-            .lte("week_ending", last_sunday)
-            .range(offset, offset + page_size - 1)
-            .execute()
-        )
-        page = response.data or []
-        rows.extend(page)
-        if len(page) < page_size:
-            break
-        offset += page_size
-
-    if not rows:
-        return pd.DataFrame(columns=["week_ending", "product", "issue", "state", "report_count"])
-
-    df = pd.DataFrame(rows)
-    df["week_ending"] = pd.to_datetime(df["week_ending"], errors="coerce")
-    df["report_count"] = pd.to_numeric(df["report_count"], errors="coerce").fillna(0)
-    return df
-
-
-# ── Floor helpers ──────────────────────────────────────────────────────────────
 
 def _get_state_tier(state: Any) -> int:
-    code = str(state).upper().strip() if state is not None else ""
-    return STATE_TIERS.get(code, DEFAULT_STATE_TIER)
+    return int(STATE_TIERS.get(str(state).upper().strip(), DEFAULT_STATE_TIER))
 
 
 def _get_state_floor(scam_type: str, state: Any) -> int:
     tier = _get_state_tier(state)
     floors = CFPB_STATE_FLOORS.get(scam_type, CFPB_STATE_FLOORS["default"])
     value = floors[tier - 1] if 1 <= tier <= 6 else CFPB_STATE_FLOORS["default"][DEFAULT_STATE_TIER - 1]
-    return max(int(value), MIN_FLOOR)
+    return max(int(value), MIN_STATE_FLOOR)
 
 
 def _get_national_floor(scam_type: str) -> int:
-    return CFPB_NATIONAL_FLOORS.get(scam_type, CFPB_NATIONAL_FLOORS["default"])
+    return int(CFPB_NATIONAL_FLOORS.get(scam_type, CFPB_NATIONAL_FLOORS["default"]))
 
 
-# ── Statistical helpers ────────────────────────────────────────────────────────
+def pull_cfpb_trends(client: Client) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    start = 0
+    while True:
+        response = (
+            client.table("cfpb_trends")
+            .select("week_ending,product,issue,scam_type,priority,state,report_count")
+            .range(start, start + PAGE_SIZE - 1)
+            .execute()
+        )
+        page = response.data or []
+        rows.extend(page)
+        if len(page) < PAGE_SIZE:
+            break
+        start += PAGE_SIZE
 
-def _safe_zscore(value: float, mean: float, std: float) -> float:
-    if pd.isna(std) or std == 0:
+    if not rows:
+        return pd.DataFrame(columns=["week_ending", "product", "issue", "scam_type", "priority", "state", "report_count"])
+
+    df = pd.DataFrame(rows)
+    df["week_ending"] = pd.to_datetime(df["week_ending"], errors="coerce")
+    df["report_count"] = pd.to_numeric(df["report_count"], errors="coerce").fillna(0).astype(int)
+    return df[df["scam_type"].notna()].copy()
+
+
+def _safe_deviation(value: float, mean: float, std: float) -> float:
+    if pd.isna(std) or std <= 0:
         return 0.0
     return (value - mean) / std
 
 
-def _base_tier(short_dev: float, long_dev: float) -> str:
-    if short_dev > HIGH_DEVIATION and long_dev > HIGH_DEVIATION:
+def _tier_for(short_deviation: float, long_deviation: float) -> str | None:
+    if short_deviation >= CRITICAL_THRESHOLD and long_deviation >= CRITICAL_THRESHOLD:
         return "CRITICAL"
-    if short_dev > HIGH_DEVIATION or long_dev > HIGH_DEVIATION:
+    if short_deviation >= ALERT_THRESHOLD or long_deviation >= ALERT_THRESHOLD:
         return "ALERT"
-    return "WATCH"
+    if short_deviation >= WATCH_THRESHOLD or long_deviation >= WATCH_THRESHOLD:
+        return "WATCH"
+    return None
+
+
+def _threshold_for_tier(tier: str) -> float:
+    if tier == "CRITICAL":
+        return CRITICAL_THRESHOLD
+    if tier == "ALERT":
+        return ALERT_THRESHOLD
+    return WATCH_THRESHOLD
 
 
 def _elevate_tier(tier: str) -> str:
@@ -159,413 +160,314 @@ def _elevate_tier(tier: str) -> str:
     return "CRITICAL"
 
 
-# ── Filter trace ───────────────────────────────────────────────────────────────
+def _series_for_group(group: pd.DataFrame, current_week: pd.Timestamp) -> pd.Series:
+    start_week = current_week - pd.Timedelta(weeks=LONG_WINDOW + 2)
+    weeks = pd.date_range(start_week, current_week, freq="7D")
+    series = (
+        group.groupby("week_ending")["report_count"]
+        .sum()
+        .reindex(weeks, fill_value=0)
+        .astype(float)
+    )
+    return series
 
-def _trace(enabled: bool, label: str, msg: str) -> None:
-    if enabled:
-        print(f"  {label}  {msg}")
 
-
-# ── National aggregate ─────────────────────────────────────────────────────────
-
-def _build_national_df(df: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate state-level cfpb_trends rows into national totals per product/issue/week.
-
-    Rows with state='NATIONAL' are used directly if present; otherwise
-    state-level rows are summed to produce national totals.
-    """
-    national_rows = df[df["state"] == "NATIONAL"]
-    if not national_rows.empty:
-        return national_rows[["product", "issue", "week_ending", "report_count"]].copy()
-
-    # Fall back: aggregate from state rows
-    state_rows = df[df["state"] != "NATIONAL"]
-    if state_rows.empty:
-        return pd.DataFrame(columns=["product", "issue", "week_ending", "report_count"])
-
+def _deviations_for_position(series: pd.Series, position: int) -> tuple[float, float, float, float, float]:
+    current = float(series.iloc[position])
+    previous = series.iloc[:position]
+    short_hist = previous.tail(SHORT_WINDOW)
+    long_hist = previous.tail(LONG_WINDOW)
+    short_mean = float(short_hist.mean()) if len(short_hist) else 0.0
+    short_std = float(short_hist.std(ddof=1)) if len(short_hist) > 1 else 0.0
+    long_mean = float(long_hist.mean()) if len(long_hist) else 0.0
+    long_std = float(long_hist.std(ddof=1)) if len(long_hist) > 1 else 0.0
     return (
-        state_rows.groupby(["product", "issue", "week_ending"], dropna=False)
-        .agg(report_count=("report_count", "sum"))
-        .reset_index()
+        current,
+        _safe_deviation(current, short_mean, short_std),
+        _safe_deviation(current, long_mean, long_std),
+        short_mean,
+        long_mean,
     )
 
 
-# ── State-level detection ──────────────────────────────────────────────────────
+def _passes_consecutive_check(series: pd.Series, tier: str, floor: int) -> bool:
+    if len(series) < 2:
+        return False
+    threshold = _threshold_for_tier(tier)
+    prev_position = len(series) - 2
+    previous_count, previous_short, previous_long, _, _ = _deviations_for_position(series, prev_position)
+    if tier == "CRITICAL":
+        previous_threshold = previous_short >= threshold and previous_long >= threshold
+    else:
+        previous_threshold = previous_short >= threshold or previous_long >= threshold
+    return previous_count > floor and previous_threshold
 
-def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[str, Any]]:
-    """Detect anomalies at the state level using SHORT_WINDOW / LONG_WINDOW."""
-    state_df = df[df["state"] != "NATIONAL"]
-    if state_df.empty:
-        return []
 
+def _trace(enabled: bool, summary: Counter, label: str, message: str) -> None:
+    summary[label] += 1
+    if enabled:
+        print(f"  [{label}] {message}")
+
+
+def _detect_group(
+    group: pd.DataFrame,
+    scam_type: str,
+    state: str,
+    current_week: pd.Timestamp,
+    floor: int,
+    detection_level: str,
+    trace: bool,
+    summary: Counter,
+) -> dict[str, Any] | None:
+    label = f"{detection_level} / {scam_type} / {state}"
+    group = group.sort_values("week_ending")
+    current_rows = group[group["week_ending"] == current_week]
+    if current_rows.empty:
+        _trace(trace, summary, "NO_CURRENT", f"{label}: no row for {current_week.date().isoformat()}")
+        return None
+
+    series = _series_for_group(group, current_week)
+    hist16 = series.iloc[-(LONG_WINDOW + 1) : -1]
+    nonzero_weeks = int((hist16 > 0).sum())
+    if nonzero_weeks < SHORT_WINDOW:
+        _trace(trace, summary, "F1_DATA", f"{label}: {nonzero_weeks} non-zero weeks in 16-week window")
+        return None
+
+    current_count, short_dev, long_dev, short_mean, long_mean = _deviations_for_position(series, len(series) - 1)
+    tier = _tier_for(short_dev, long_dev)
+    if tier is None:
+        _trace(trace, summary, "F2_THRESHOLD", f"{label}: short={short_dev:+.3f} long={long_dev:+.3f}")
+        return None
+
+    if current_count <= floor:
+        _trace(trace, summary, "F3_FLOOR", f"{label}: count={int(current_count)} floor={floor} tier={tier}")
+        return None
+
+    if not _passes_consecutive_check(series, tier, floor):
+        _trace(trace, summary, "F4_CONSEC", f"{label}: tier={tier} did not persist for 2 consecutive weeks")
+        return None
+
+    category = _category_map().get(scam_type, {})
+    row = current_rows.iloc[0]
+    sub_issues = category.get("sub_issues") or []
+    anomaly = {
+        "product": row.get("product") or category.get("product"),
+        "issue": row.get("issue") or category.get("issue"),
+        "sub_issue": ", ".join(sub_issues) if sub_issues else None,
+        "scam_type": scam_type,
+        "priority": row.get("priority") or category.get("priority"),
+        "state": state,
+        "alert_tier": tier,
+        "scope": "National" if state == "NATIONAL" else "Local",
+        "short_deviation": round(short_dev, 3),
+        "long_deviation": round(long_dev, 3),
+        "current_count": int(current_count),
+        "week_ending": current_week.date().isoformat(),
+        "detection_level": detection_level,
+        "run_timestamp": datetime.now(timezone.utc).isoformat(),
+        "detection_window_short": SHORT_WINDOW,
+        "detection_window_long": LONG_WINDOW,
+        "baseline_mean_short": round(short_mean, 3),
+        "baseline_mean_long": round(long_mean, 3),
+    }
+    _trace(
+        trace,
+        summary,
+        "PASS",
+        f"{label}: tier={tier} count={int(current_count)} floor={floor} short={short_dev:+.3f} long={long_dev:+.3f}",
+    )
+    return anomaly
+
+
+def detect_cfpb_anomalies_national(df: pd.DataFrame, trace: bool = True) -> tuple[list[dict[str, Any]], Counter]:
+    summary: Counter = Counter()
+    if df.empty:
+        return [], summary
     current_week = df["week_ending"].max()
-    candidates: list[dict[str, Any]] = []
-    trace_counts: dict[str, int] = {
-        "no_current": 0, "f1": 0, "f2": 0, "f3": 0, "f4": 0, "survived": 0,
+    national_df = df[df["state"] == "NATIONAL"]
+    anomalies: list[dict[str, Any]] = []
+    for scam_type, group in national_df.groupby("scam_type", dropna=False):
+        anomaly = _detect_group(
+            group=group,
+            scam_type=str(scam_type),
+            state="NATIONAL",
+            current_week=current_week,
+            floor=_get_national_floor(str(scam_type)),
+            detection_level="National",
+            trace=trace,
+            summary=summary,
+        )
+        if anomaly:
+            anomalies.append(anomaly)
+    return anomalies, summary
+
+
+def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = True) -> tuple[list[dict[str, Any]], Counter]:
+    summary: Counter = Counter()
+    if df.empty:
+        return [], summary
+    current_week = df["week_ending"].max()
+    state_df = df[df["state"] != "NATIONAL"]
+    anomalies: list[dict[str, Any]] = []
+    for (scam_type, state), group in state_df.groupby(["scam_type", "state"], dropna=False):
+        anomaly = _detect_group(
+            group=group,
+            scam_type=str(scam_type),
+            state=str(state),
+            current_week=current_week,
+            floor=_get_state_floor(str(scam_type), state),
+            detection_level="State",
+            trace=trace,
+            summary=summary,
+        )
+        if anomaly:
+            anomalies.append(anomaly)
+    _assign_state_scopes(anomalies, df, current_week)
+    return anomalies, summary
+
+
+def _assign_state_scopes(anomalies: list[dict[str, Any]], df: pd.DataFrame, current_week: pd.Timestamp) -> None:
+    flagged_count: Counter = Counter((row["scam_type"], row["week_ending"]) for row in anomalies)
+    national_week = df[(df["state"] == "NATIONAL") & (df["week_ending"] == current_week)]
+    national_counts = {
+        str(row["scam_type"]): int(row["report_count"])
+        for _, row in national_week.iterrows()
     }
-
-    for (product, issue, state), group in state_df.groupby(
-        ["product", "issue", "state"], dropna=False
-    ):
-        combo = f"{product} / {issue} / {state}"
-        group = group.sort_values("week_ending").reset_index(drop=True)
-
-        current_rows = group[group["week_ending"] == current_week]
-        if current_rows.empty:
-            trace_counts["no_current"] += 1
-            _trace(trace, "[SKIP  ]", f"{combo}  →  no data for current week")
-            continue
-
-        current_count = float(current_rows.iloc[0]["report_count"])
-        floor = _get_state_floor(str(issue), state)
-        state_tier = _get_state_tier(state)
-        _trace(trace, "[TIER  ]", f"{combo}  →  tier={state_tier}  floor={floor}")
-
-        historical = group[group["week_ending"] < current_week].sort_values("week_ending")
-
-        # Filter 1: data sufficiency — need LONG_WINDOW historical rows
-        if len(historical) < LONG_WINDOW:
-            trace_counts["f1"] += 1
-            _trace(
-                trace, "[F1 DROP]",
-                f"{combo}  →  only {len(historical)} historical weeks (need {LONG_WINDOW})"
-            )
-            continue
-
-        short_hist = historical.tail(SHORT_WINDOW)
-        long_hist = historical.tail(LONG_WINDOW)
-
-        # Filter 2: dual threshold
-        short_mean = short_hist["report_count"].mean()
-        short_std = short_hist["report_count"].std(ddof=1)
-        long_mean = long_hist["report_count"].mean()
-        long_std = long_hist["report_count"].std(ddof=1)
-
-        short_dev = _safe_zscore(current_count, short_mean, short_std)
-        long_dev = _safe_zscore(current_count, long_mean, long_std)
-
-        if short_dev < DEVIATION_THRESHOLD and long_dev < DEVIATION_THRESHOLD:
-            trace_counts["f2"] += 1
-            _trace(
-                trace, "[F2 DROP]",
-                f"{combo}  →  short={short_dev:+.3f}  long={long_dev:+.3f}"
-                f"  (both below {DEVIATION_THRESHOLD})"
-            )
-            continue
-
-        # Filter 3: volume floor
-        if current_count < floor:
-            trace_counts["f3"] += 1
-            _trace(
-                trace, "[F3 DROP]",
-                f"{combo}  →  count={int(current_count)} < floor={floor}"
-            )
-            continue
-
-        # Filter 4: trend shape — previous week also above floor
-        prev_row = historical.tail(1)
-        prev_count = float(prev_row.iloc[0]["report_count"]) if not prev_row.empty else 0.0
-        if prev_row.empty or prev_count < floor:
-            trace_counts["f4"] += 1
-            _trace(
-                trace, "[F4 DROP]",
-                f"{combo}  →  prev_count={int(prev_count)} < floor={floor}  (single-week spike)"
-            )
-            continue
-
-        # No Filter 5 (dollar trajectory) — CFPB trends have no dollar data
-
-        tier = _base_tier(short_dev, long_dev)
-        trace_counts["survived"] += 1
-        _trace(
-            trace, "[PASS  ]",
-            f"{combo}  →  count={int(current_count)}  short={short_dev:+.3f}"
-            f"  long={long_dev:+.3f}  tier={tier}"
-        )
-
-        candidates.append(
-            {
-                "product": product,
-                "issue": issue,
-                "state": state,
-                "short_deviation": round(short_dev, 3),
-                "long_deviation": round(long_dev, 3),
-                "current_count": int(current_count),
-                "alert_tier": tier,
-                "week_ending": (
-                    current_week.date().isoformat() if pd.notna(current_week) else None
-                ),
-                "detection_level": "State",
-            }
-        )
-
-    if trace:
-        total = sum(trace_counts.values())
-        print(
-            f"\n  CFPB state filter summary: total={total}"
-            f"  no_current={trace_counts['no_current']}"
-            f"  F1={trace_counts['f1']}  F2={trace_counts['f2']}"
-            f"  F3={trace_counts['f3']}  F4={trace_counts['f4']}"
-            f"  survived={trace_counts['survived']}\n"
-        )
-
-    if not candidates:
-        return []
-
-    # Scope classification
-    current_df = df[df["week_ending"] == current_week]
-    national_totals: dict[tuple, float] = {}
-    for (product, issue), grp in current_df.groupby(["product", "issue"], dropna=False):
-        national_totals[(product, issue)] = float(grp["report_count"].sum())
-
-    flagged_state_count: dict[tuple, int] = {}
-    for c in candidates:
-        key = (c["product"], c["issue"])
-        flagged_state_count[key] = flagged_state_count.get(key, 0) + 1
-
-    for c in candidates:
-        key = (c["product"], c["issue"])
-        n_flagged = flagged_state_count.get(key, 1)
-        nat_total = national_totals.get(key, 0.0)
-
-        if n_flagged > 6:
-            scope = "National"
-        elif n_flagged >= 3:
-            scope = "Regional"
-        elif nat_total > 0 and c["current_count"] / nat_total > 0.50:
-            scope = "Local"
+    for anomaly in anomalies:
+        key = (anomaly["scam_type"], anomaly["week_ending"])
+        count = flagged_count[key]
+        national_volume = national_counts.get(anomaly["scam_type"], 0)
+        if count >= 6:
+            anomaly["scope"] = "National"
+        elif 2 <= count <= 5:
+            anomaly["scope"] = "Regional"
+        elif national_volume > 0 and anomaly["current_count"] / national_volume > 0.50:
+            anomaly["scope"] = "Local"
         else:
-            scope = "Local"
+            anomaly["scope"] = "Local"
 
-        c["scope"] = scope
-
-    candidates.sort(key=lambda r: (TIER_ORDER.get(r["alert_tier"], 99), -r["short_deviation"]))
-    return candidates
-
-
-# ── National-level detection ───────────────────────────────────────────────────
-
-def detect_cfpb_anomalies_national(df: pd.DataFrame, trace: bool = False) -> list[dict[str, Any]]:
-    """Detect anomalies at the national level."""
-    national_df = _build_national_df(df)
-    if national_df.empty:
-        return []
-
-    current_week = national_df["week_ending"].max()
-    candidates: list[dict[str, Any]] = []
-    trace_counts: dict[str, int] = {
-        "no_current": 0, "f1": 0, "f2": 0, "f3": 0, "f4": 0, "survived": 0,
-    }
-
-    for (product, issue), group in national_df.groupby(["product", "issue"], dropna=False):
-        label = f"NATIONAL / {product} / {issue}"
-        group = group.sort_values("week_ending").reset_index(drop=True)
-
-        current_rows = group[group["week_ending"] == current_week]
-        if current_rows.empty:
-            trace_counts["no_current"] += 1
-            _trace(trace, "[NAT-SKIP]", f"{label}  →  no data for current week")
-            continue
-
-        current_count = float(current_rows.iloc[0]["report_count"])
-        historical = group[group["week_ending"] < current_week].sort_values("week_ending")
-
-        # Filter 1
-        if len(historical) < NATIONAL_LONG_WINDOW:
-            trace_counts["f1"] += 1
-            _trace(
-                trace, "[NAT-F1 DROP]",
-                f"{label}  →  only {len(historical)} historical weeks (need {NATIONAL_LONG_WINDOW})"
-            )
-            continue
-
-        short_hist = historical.tail(NATIONAL_SHORT_WINDOW)
-        long_hist = historical.tail(NATIONAL_LONG_WINDOW)
-
-        short_mean = short_hist["report_count"].mean()
-        short_std = short_hist["report_count"].std(ddof=1)
-        long_mean = long_hist["report_count"].mean()
-        long_std = long_hist["report_count"].std(ddof=1)
-
-        short_dev = _safe_zscore(current_count, short_mean, short_std)
-        long_dev = _safe_zscore(current_count, long_mean, long_std)
-
-        floor = _get_national_floor(str(issue))
-        prev_row = historical.tail(1)
-        prev_count = float(prev_row.iloc[0]["report_count"]) if not prev_row.empty else 0.0
-
-        _trace(
-            trace, "[NAT-STAT]",
-            f"{label}  →  hist={len(historical)}  count={int(current_count)}"
-            f"  short(z={short_dev:+.3f})  long(z={long_dev:+.3f})"
-            f"  floor={floor}  prev={int(prev_count)}"
-        )
-
-        # Filter 2
-        if short_dev < DEVIATION_THRESHOLD and long_dev < DEVIATION_THRESHOLD:
-            trace_counts["f2"] += 1
-            _trace(trace, "[NAT-F2 DROP]", f"{label}  →  both below {DEVIATION_THRESHOLD}")
-            continue
-
-        # Filter 3
-        if current_count < floor:
-            trace_counts["f3"] += 1
-            _trace(trace, "[NAT-F3 DROP]", f"{label}  →  count={int(current_count)} < floor={floor}")
-            continue
-
-        # Filter 4
-        if prev_row.empty or prev_count < floor:
-            trace_counts["f4"] += 1
-            _trace(trace, "[NAT-F4 DROP]", f"{label}  →  prev={int(prev_count)} < floor={floor}")
-            continue
-
-        tier = _base_tier(short_dev, long_dev)
-        trace_counts["survived"] += 1
-        _trace(
-            trace, "[NAT-PASS]",
-            f"{label}  →  count={int(current_count)}  short={short_dev:+.3f}"
-            f"  long={long_dev:+.3f}  tier={tier}"
-        )
-
-        candidates.append(
-            {
-                "product": product,
-                "issue": issue,
-                "state": None,
-                "short_deviation": round(short_dev, 3),
-                "long_deviation": round(long_dev, 3),
-                "current_count": int(current_count),
-                "alert_tier": tier,
-                "week_ending": (
-                    current_week.date().isoformat() if pd.notna(current_week) else None
-                ),
-                "detection_level": "National",
-            }
-        )
-
-    if trace:
-        total = sum(trace_counts.values())
-        print(
-            f"\n  CFPB national filter summary: total={total}"
-            f"  no_current={trace_counts['no_current']}"
-            f"  F1={trace_counts['f1']}  F2={trace_counts['f2']}"
-            f"  F3={trace_counts['f3']}  F4={trace_counts['f4']}"
-            f"  survived={trace_counts['survived']}\n"
-        )
-
-    candidates.sort(key=lambda r: (TIER_ORDER.get(r["alert_tier"], 99), -r["short_deviation"]))
-    return candidates
-
-
-# ── Merge ──────────────────────────────────────────────────────────────────────
 
 def merge_cfpb_results(
     national: list[dict[str, Any]],
     state: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Merge national and state results; elevate tier for Both detections."""
-    # Key by (product, issue) for national matches
-    national_keys = {(r["product"], r["issue"]) for r in national}
-    state_keys = {(r["product"], r["issue"]) for r in state}
-    both_keys = national_keys & state_keys
-
+    national_keys = {(row["scam_type"], row["week_ending"]) for row in national}
+    state_keys = {(row["scam_type"], row["week_ending"]) for row in state}
+    both = national_keys & state_keys
     merged: list[dict[str, Any]] = []
-
-    for r in national:
-        r = r.copy()
-        if (r["product"], r["issue"]) in both_keys:
-            r["detection_level"] = "Both"
-            r["alert_tier"] = _elevate_tier(r["alert_tier"])
-        merged.append(r)
-
-    for r in state:
-        r = r.copy()
-        if (r["product"], r["issue"]) in both_keys:
-            r["detection_level"] = "Both"
-            r["alert_tier"] = _elevate_tier(r["alert_tier"])
-        merged.append(r)
-
+    for row in national + state:
+        copy = row.copy()
+        if (copy["scam_type"], copy["week_ending"]) in both:
+            copy["detection_level"] = "Both"
+            copy["alert_tier"] = _elevate_tier(str(copy["alert_tier"]))
+        merged.append(copy)
+    merged.sort(key=lambda item: (TIER_ORDER.get(str(item["alert_tier"]), 99), -float(item["short_deviation"])))
     return merged
 
 
-# ── Output ─────────────────────────────────────────────────────────────────────
+def upsert_cfpb_anomaly_alerts(client: Client, anomalies: list[dict[str, Any]]) -> int:
+    if not anomalies:
+        return 0
+    payload = [
+        {
+            "run_timestamp": row["run_timestamp"],
+            "product": row["product"],
+            "issue": row["issue"],
+            "sub_issue": row.get("sub_issue"),
+            "scam_type": row["scam_type"],
+            "priority": row.get("priority"),
+            "state": row["state"],
+            "alert_tier": row["alert_tier"],
+            "scope": row["scope"],
+            "short_deviation": row["short_deviation"],
+            "long_deviation": row["long_deviation"],
+            "current_count": row["current_count"],
+            "week_ending": row["week_ending"],
+            "detection_level": row["detection_level"],
+            "detection_window_short": SHORT_WINDOW,
+            "detection_window_long": LONG_WINDOW,
+            "analysis_status": "pending_analysis",
+        }
+        for row in anomalies
+    ]
+    upserted = 0
+    for start in range(0, len(payload), UPSERT_BATCH_SIZE):
+        batch = payload[start : start + UPSERT_BATCH_SIZE]
+        try:
+            client.table("cfpb_anomaly_alerts").upsert(
+                batch,
+                on_conflict="week_ending,scam_type,state,detection_level",
+            ).execute()
+        except APIError as exc:
+            raise RuntimeError(
+                "cfpb_anomaly_alerts upsert failed. Apply the CFPB scam pipeline migration before detection."
+            ) from exc
+        upserted += len(batch)
+    return upserted
+
 
 def print_cfpb_results(anomalies: list[dict[str, Any]]) -> None:
+    print("\nCFPB anomaly results")
     if not anomalies:
-        print("\nNo CFPB anomalies detected for the current week.")
+        print("- No CFPB anomalies detected.")
         return
-
-    n_by_tier = {t: sum(1 for a in anomalies if a["alert_tier"] == t) for t in TIER_ORDER}
-    both_rows = [a for a in anomalies if a.get("detection_level") == "Both"]
-    nat_rows = [a for a in anomalies if a.get("detection_level") == "National"]
-    state_rows = [a for a in anomalies if a.get("detection_level") == "State"]
-
-    print(f"\n{'#' * 78}")
-    print(
-        f"  CFPB ANOMALY RESULTS  |  Total: {len(anomalies)}  |  "
-        f"CRITICAL: {n_by_tier['CRITICAL']}  "
-        f"ALERT: {n_by_tier['ALERT']}  "
-        f"WATCH: {n_by_tier['WATCH']}"
-    )
-    print(
-        f"  Both: {len(both_rows) // 2 if both_rows else 0}  |  "
-        f"National-only: {len(nat_rows)}  |  "
-        f"State-only: {len(state_rows)}"
-    )
-    print(f"{'#' * 78}")
-
-    for section_label, section_rows in [
-        ("BOTH (national + state flagged)", both_rows),
-        ("NATIONAL ONLY", nat_rows),
-        ("STATE ONLY", state_rows),
-    ]:
-        print(f"\n--- {section_label} ---")
-        if not section_rows:
-            print("  None")
-            continue
-        for a in section_rows:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for anomaly in anomalies:
+        grouped[anomaly["scam_type"]].append(anomaly)
+    for scam_type in sorted(grouped):
+        print(f"\n{scam_type}")
+        for row in grouped[scam_type]:
             print(
-                f"  [{a['alert_tier']:8s}]  "
-                f"{str(a.get('product',''))[:35]:35s}  "
-                f"{str(a.get('issue',''))[:35]:35s}  "
-                f"state={str(a.get('state') or 'NATIONAL'):12s}  "
-                f"count={a.get('current_count',0):5d}  "
-                f"short={a.get('short_deviation',0):+.3f}  "
-                f"long={a.get('long_deviation',0):+.3f}  "
-                f"scope={a.get('scope','')}"
+                f"  [{row['alert_tier']}] state={row['state']} scope={row['scope']} "
+                f"level={row['detection_level']} count={row['current_count']} "
+                f"short={row['short_deviation']:+.3f} long={row['long_deviation']:+.3f}"
             )
 
-    print(f"\n{'#' * 78}\n")
+    print("\nHigh priority CFPB focus categories")
+    focus_terms = ("Government Impersonation", "Payment Transfer Fraud", "Identity Theft")
+    focus = [row for row in anomalies if any(term in row["scam_type"] for term in focus_terms)]
+    if not focus:
+        print("- None")
+        return
+    for row in focus:
+        print(
+            f"- {row['scam_type']} | {row['state']} | {row['alert_tier']} | "
+            f"count={row['current_count']} short={row['short_deviation']:+.3f}"
+        )
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+def _print_filter_summary(label: str, summary: Counter) -> None:
+    print(f"\n{label} filter summary")
+    for key in ("NO_CURRENT", "F1_DATA", "F2_THRESHOLD", "F3_FLOOR", "F4_CONSEC", "PASS"):
+        print(f"- {key}: {int(summary.get(key, 0))}")
 
-def run_detection(trace: bool = False) -> list[dict[str, Any]]:
+
+def run_detection(trace: bool = True, persist: bool = True) -> list[dict[str, Any]]:
     client = get_supabase_client()
     df = pull_cfpb_trends(client)
-
     if df.empty:
-        print("No CFPB trend data found for the last 24 weeks.")
+        print("No CFPB trend data found.")
         return []
 
-    n_combos = df[df["state"] != "NATIONAL"].groupby(
-        ["product", "issue", "state"], dropna=False
-    ).ngroups
     print(
-        f"Loaded {len(df)} CFPB trend rows | "
-        f"{df['week_ending'].nunique()} weeks | "
-        f"{n_combos} product/issue/state combinations"
+        f"Loaded {len(df)} CFPB trends rows | {df['week_ending'].nunique()} weeks | "
+        f"{df['scam_type'].nunique()} scam categories"
     )
-
-    national = detect_cfpb_anomalies_national(df, trace=trace)
-    state = detect_cfpb_anomalies(df, trace=trace)
+    national, national_summary = detect_cfpb_anomalies_national(df, trace=trace)
+    state, state_summary = detect_cfpb_anomalies(df, trace=trace)
     anomalies = merge_cfpb_results(national, state)
+    if persist:
+        inserted = upsert_cfpb_anomaly_alerts(client, anomalies)
+        print(f"\ncfpb_anomaly_alerts rows upserted: {inserted}")
+    _print_filter_summary("National pass", national_summary)
+    _print_filter_summary("State pass", state_summary)
     print_cfpb_results(anomalies)
     return anomalies
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="CFPB anomaly detection")
-    parser.add_argument("--test", action="store_true", help="Print filter trace")
+    parser = argparse.ArgumentParser(description="Detect CFPB scam category anomalies.")
+    parser.add_argument("--no-trace", action="store_true")
+    parser.add_argument("--no-persist", action="store_true")
     args = parser.parse_args()
-    run_detection(trace=args.test)
+    run_detection(trace=not args.no_trace, persist=not args.no_persist)

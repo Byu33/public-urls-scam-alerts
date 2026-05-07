@@ -128,9 +128,9 @@ def pull_cfpb_alerts_for_week(client: Client, week_ending: str) -> list[dict[str
             response = (
                 client.table("cfpb_anomaly_alerts")
                 .select(
-                    "id,week_ending,product,issue,state,alert_tier,scope,"
+                    "id,week_ending,product,issue,sub_issue,scam_type,state,alert_tier,scope,"
                     "detection_level,current_count,short_deviation,long_deviation,"
-                    "top_company,brands_mentioned,dominant_brand"
+                    "top_company,top_sub_issue,priority,brands_mentioned,dominant_brand"
                 )
                 .eq("week_ending", week_ending)
                 .range(start, start + PAGE_SIZE - 1)
@@ -191,7 +191,7 @@ def _build_cfpb_stats(
     top = sorted_alerts[0]
     cfpb_top_finding = (
         f"{top.get('alert_tier', 'WATCH')} — "
-        f"{top.get('product', '')} / {top.get('issue', '')} "
+        f"{top.get('scam_type') or top.get('product', '')} / {top.get('issue', '')} "
         f"in {top.get('state') or 'NATIONAL'} "
         f"(count={top.get('current_count', 0)}, "
         f"company={top.get('top_company') or 'unknown'})"
@@ -274,6 +274,55 @@ def _find_combined_signals(
     return signals
 
 
+def _cfpb_alert_line(item: dict[str, Any], include_company: bool = True) -> str:
+    company = f", top company={item.get('top_company') or 'unknown'}" if include_company else ""
+    top_sub_issue = f", top sub-issue={item.get('top_sub_issue')}" if item.get("top_sub_issue") else ""
+    return (
+        f"{item.get('scam_type') or item.get('product')} in {item.get('state') or 'NATIONAL'} "
+        f"tier={item.get('alert_tier')} count={item.get('current_count')} "
+        f"short={float(item.get('short_deviation') or 0):+.3f}"
+        f"{top_sub_issue}{company}"
+    )
+
+
+def _cluster_lines(cfpb_alerts: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    elevated_by_state: dict[str, set[str]] = {}
+    for alert in cfpb_alerts:
+        state = str(alert.get("state") or "NATIONAL")
+        elevated_by_state.setdefault(state, set()).add(str(alert.get("scam_type") or ""))
+
+    identity_cluster = {
+        "Credit Card Identity Theft",
+        "Fraudulent Account Opening",
+        "Phantom Debt Identity Theft",
+    }
+    government_cluster = {
+        "Government Impersonation Debt Collection",
+        "Illegal Debt Collection Threats",
+    }
+
+    identity_states = sorted(state for state, scam_types in elevated_by_state.items() if identity_cluster <= scam_types)
+    government_states = sorted(state for state, scam_types in elevated_by_state.items() if government_cluster <= scam_types)
+
+    lines.append("### CFPB IDENTITY THEFT CLUSTER")
+    if identity_states:
+        for state in identity_states:
+            lines.append(f"- **Coordinated identity theft campaign flagged in {state}.**")
+    else:
+        lines.append("- No coordinated identity theft cluster this week.")
+    lines.append("")
+
+    lines.append("### CFPB GOVERNMENT IMPERSONATION CLUSTER")
+    if government_states:
+        for state in government_states:
+            lines.append(f"- **Coordinated government impersonation campaign flagged in {state}.**")
+    else:
+        lines.append("- No coordinated government impersonation cluster this week.")
+    lines.append("")
+    return lines
+
+
 def build_markdown(
     week_ending: str,
     alerts: list[dict[str, Any]],
@@ -287,6 +336,7 @@ def build_markdown(
     top_finding_summary: str,
     national_summary: str,
     cfpb_stats: dict[str, Any] | None = None,
+    cfpb_alerts: list[dict[str, Any]] | None = None,
     combined_signals: list[str] | None = None,
 ) -> str:
     critical = [a for a in alerts if str(a.get("alert_tier", "")).upper() == "CRITICAL"]
@@ -294,6 +344,7 @@ def build_markdown(
     watch = [a for a in alerts if str(a.get("alert_tier", "")).upper() == "WATCH"]
 
     cfpb = cfpb_stats or {}
+    cfpb_alert_rows = cfpb_alerts or []
     signals = combined_signals or []
 
     lines: list[str] = []
@@ -402,6 +453,41 @@ def build_markdown(
         if cfpb.get("top_cfpb_companies"):
             lines.append(f"- Top companies: {cfpb['top_cfpb_companies']}")
         lines.append(f"- Top finding: {cfpb.get('cfpb_top_finding', 'None')}")
+        lines.append("")
+
+        high_priority = [
+            alert for alert in cfpb_alert_rows
+            if str(alert.get("priority", "")).upper() == "HIGH"
+        ]
+        medium_priority = [
+            alert for alert in cfpb_alert_rows
+            if str(alert.get("priority", "")).upper() == "MEDIUM"
+        ]
+
+        lines.append("### HIGH PRIORITY CFPB ALERTS")
+        if high_priority:
+            for item in high_priority:
+                lines.append(f"- {_cfpb_alert_line(item)}")
+        else:
+            lines.append("- None")
+        lines.append("")
+
+        lines.append("### MEDIUM PRIORITY CFPB ALERTS")
+        if medium_priority:
+            lines.append("| Scam type | State | Tier | Count | Top sub-issue |")
+            lines.append("| --- | --- | --- | ---: | --- |")
+            for item in medium_priority:
+                lines.append(
+                    f"| {item.get('scam_type') or item.get('product')} "
+                    f"| {item.get('state') or 'NATIONAL'} "
+                    f"| {item.get('alert_tier')} "
+                    f"| {item.get('current_count')} "
+                    f"| {item.get('top_sub_issue') or ''} |"
+                )
+        else:
+            lines.append("- None")
+        lines.append("")
+        lines.extend(_cluster_lines(cfpb_alert_rows))
     else:
         lines.append("- CFPB data not available this week")
 
@@ -527,6 +613,7 @@ def generate_weekly_briefing() -> dict[str, Any]:
         top_finding_summary=top_finding_summary,
         national_summary=national_summary,
         cfpb_stats=cfpb_stats,
+        cfpb_alerts=cfpb_alerts,
         combined_signals=combined_signals,
     )
 

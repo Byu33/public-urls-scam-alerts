@@ -260,7 +260,7 @@ def run_builder_phase() -> dict[str, Any]:
         ]
         total_timeout = int(os.getenv("ORCHESTRATOR_CFPB_FETCH_TOTAL_TIMEOUT_SECONDS", "120"))
         try:
-            cfpb_trend_data = run_child_action(
+            cfpb_result = run_child_action(
                 lambda: cfpb_fetch.fetch_cfpb_trends(
                     lookback_weeks=lookback_weeks,
                     states=states,
@@ -268,6 +268,7 @@ def run_builder_phase() -> dict[str, Any]:
                 total_timeout,
                 "cfpb/fetch_trends.py",
             )
+            cfpb_trend_data = cfpb_result if isinstance(cfpb_result, dict) else {"total_weekly_data_points": len(cfpb_result or [])}
         except TimeoutError as exc:
             cfpb_trend_data = []
             print(f"WARNING: {exc}; continuing with existing Supabase cfpb_trends data.")
@@ -280,8 +281,8 @@ def run_builder_phase() -> dict[str, Any]:
                 "warnings": [f"{exc}; continuing with existing Supabase cfpb_trends data."],
             }
         return {
-            "trend_rows": len(cfpb_trend_data),
-            "sample_rows": cfpb_trend_data[:3],
+            "trend_rows": int((cfpb_trend_data or {}).get("total_weekly_data_points", 0)),
+            "sample_rows": cfpb_trend_data,
             "lookback_weeks": lookback_weeks,
             "states": states if states is not None else "ALL",
         }
@@ -368,8 +369,8 @@ def run_cfpb_detection() -> dict[str, Any]:
         print("No CFPB trend data found for the last 24 weeks.")
         anomalies: list[dict[str, Any]] = []
     else:
-        national = module.detect_cfpb_anomalies_national(df, trace=False)
-        state = module.detect_cfpb_anomalies(df, trace=False)
+        national, _national_summary = module.detect_cfpb_anomalies_national(df, trace=False)
+        state, _state_summary = module.detect_cfpb_anomalies(df, trace=False)
         anomalies = module.merge_cfpb_results(national, state)
         module.print_cfpb_results(anomalies)
     return {
