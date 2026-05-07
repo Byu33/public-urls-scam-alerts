@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import argparse
+import os
 import time
-from datetime import date, timedelta
+from collections import defaultdict
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import requests
+from dotenv import load_dotenv
+from postgrest.exceptions import APIError
+from supabase import Client, create_client
 
-# ── CFPB API ───────────────────────────────────────────────────────────────────
 
 CFPB_API_BASE = "https://www.consumerfinance.gov/data-research/consumer-complaints/search/api/v1/"
+TRENDS_ENDPOINT = CFPB_API_BASE + "trends"
 
-# All US states + DC used for state-level trend calls
 ALL_STATES = [
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DC", "DE", "FL",
     "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME",
@@ -19,318 +26,427 @@ ALL_STATES = [
     "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
 ]
 
-# ── Category definitions ───────────────────────────────────────────────────────
-
-CFPB_CATEGORIES: list[dict[str, Any]] = [
+CFPB_SCAM_CATEGORIES: list[dict[str, Any]] = [
     {
-        "product": "Money transfer, virtual currency, or money service",
-        "sub_products": [
-            "Domestic money transfer",
-            "International money transfer",
-            "Virtual currency",
-        ],
-        "issue": "Fraud or scam",
-        "scam_type": "Payment Fraud",
-    },
-    {
-        "product": "Checking or savings account",
-        "sub_products": ["Checking account"],
-        "issue": "Problem with a lender or other company charging your account",
-        "scam_type": "Account Takeover",
-    },
-    {
-        "product": "Checking or savings account",
-        "sub_products": ["Checking account"],
-        "issue": "Managing an account",
-        "scam_type": "Debit Card Fraud",
-    },
-    {
-        "product": "Credit card or prepaid card",
-        "sub_products": ["General-purpose credit card or charge card"],
-        "issue": "Problem with a purchase shown on your statement",
-        "scam_type": "Credit Card Fraud",
-    },
-    {
-        "product": "Credit card or prepaid card",
-        "sub_products": ["General-purpose credit card or charge card"],
-        "issue": "Getting a credit card",
-        "scam_type": "Identity Theft",
-    },
-    {
+        "scam_type": "Government Impersonation Debt Collection",
         "product": "Debt collection",
-        "sub_products": [],
         "issue": "False statements or representation",
-        "scam_type": "Debt Collection Fraud",
+        "sub_issues": [
+            "Impersonated attorney, law enforcement, or government official",
+            "Indicated you were committing crime by not paying debt",
+        ],
+        "priority": "HIGH",
+        "volume_weight": 0.3,
     },
     {
+        "scam_type": "Illegal Debt Collection Threats",
+        "product": "Debt collection",
+        "issue": "Took or threatened to take negative or legal action",
+        "sub_issues": [
+            "Threatened to arrest you or take you to jail if you do not pay",
+            "Threatened to turn you in to immigration or deport you",
+        ],
+        "priority": "HIGH",
+        "volume_weight": 0.4,
+    },
+    {
+        "scam_type": "Phantom Debt Identity Theft",
+        "product": "Debt collection",
+        "issue": "Attempts to collect debt not owed",
+        "sub_issues": [
+            "Debt is not yours",
+            "Debt was result of identity theft",
+        ],
+        "priority": "HIGH",
+        "volume_weight": 1.5,
+    },
+    {
+        "scam_type": "Credit Card Identity Theft",
         "product": "Credit card or prepaid card",
-        "sub_products": ["General-purpose prepaid card", "Gift card"],
-        "issue": "Problem with a purchase or transfer",
-        "scam_type": "Gift Card Scam",
+        "issue": "Getting a credit card",
+        "sub_issues": [
+            "Card opened without my consent or knowledge",
+            "Card opened as result of identity theft or fraud",
+        ],
+        "priority": "HIGH",
+        "volume_weight": 0.8,
     },
     {
+        "scam_type": "Unauthorized Card Charges",
+        "product": "Credit card or prepaid card",
+        "issue": "Problem with a purchase shown on your statement",
+        "sub_issues": [
+            "Card was charged for something you did not purchase with the card",
+        ],
+        "priority": "HIGH",
+        "volume_weight": 0.6,
+    },
+    {
+        "scam_type": "Account Takeover Unauthorized Charges",
+        "product": "Checking or savings account",
+        "issue": "Problem with a lender or other company charging your account",
+        "sub_issues": [
+            "Transaction was not authorized",
+            "Can't stop withdrawals from your account",
+        ],
+        "priority": "HIGH",
+        "volume_weight": 1.0,
+    },
+    {
+        "scam_type": "Fraudulent Account Opening",
+        "product": "Checking or savings account",
+        "issue": "Opening an account",
+        "sub_issues": [
+            "Account opened without my consent or knowledge",
+            "Account opened as a result of fraud",
+        ],
+        "priority": "HIGH",
+        "volume_weight": 0.3,
+    },
+    {
+        "scam_type": "Explicit Fraud or Scam",
+        "product": "Credit monitoring or identity theft protection services",
+        "issue": "Fraud or scam",
+        "sub_issues": [],
+        "priority": "HIGH",
+        "volume_weight": 1.2,
+    },
+    {
+        "scam_type": "Predatory Service Advance Fee",
         "product": "Debt or credit management",
-        "sub_products": ["Student loan debt relief", "Mortgage modification"],
         "issue": "Didn't provide services promised",
-        "scam_type": "Predatory Service Scam",
+        "sub_issues": [],
+        "priority": "MEDIUM",
+        "volume_weight": 0.2,
+    },
+    {
+        "scam_type": "Predatory Upfront Fee Scam",
+        "product": "Debt or credit management",
+        "issue": "Charged upfront or unexpected fees",
+        "sub_issues": [],
+        "priority": "MEDIUM",
+        "volume_weight": 0.2,
+    },
+    {
+        "scam_type": "Fraudulent Loan",
+        "product": "Payday loan, title loan, personal loan, or advance loan",
+        "issue": "Getting a loan",
+        "sub_issues": [
+            "Loan opened without my consent or knowledge",
+            "Fraudulent loan",
+        ],
+        "priority": "MEDIUM",
+        "volume_weight": 0.3,
+    },
+    {
+        "scam_type": "Student Loan Relief Scam",
+        "product": "Student loan",
+        "issue": "Dealing with your lender or servicer",
+        "sub_issues": [
+            "Didn't provide services promised",
+            "Received bad information about your loan",
+        ],
+        "priority": "MEDIUM",
+        "volume_weight": 0.2,
+    },
+    {
+        "scam_type": "Payment Transfer Fraud",
+        "product": "Money transfer, virtual currency, or money service",
+        "issue": "Fraud or scam",
+        "sub_issues": [],
+        "priority": "HIGH",
+        "volume_weight": 1.5,
+    },
+    {
+        "scam_type": "Prepaid Card Purchase Fraud",
+        "product": "Credit card or prepaid card",
+        "issue": "Problem with a purchase or transfer",
+        "sub_issues": [
+            "Charged for a purchase or transfer you did not make with the card",
+        ],
+        "priority": "MEDIUM",
+        "volume_weight": 0.3,
+    },
+    {
+        "scam_type": "Digital Wallet Account Takeover",
+        "product": "Checking or savings account",
+        "issue": "Managing an account",
+        "sub_issues": [
+            "Problem using a debit or ATM card",
+            "Funds not handled or disbursed as instructed",
+        ],
+        "priority": "MEDIUM",
+        "volume_weight": 0.5,
+    },
+    {
+        "scam_type": "Unauthorized Loan Identity Theft",
+        "product": "Vehicle loan or lease",
+        "issue": "Getting a loan or lease",
+        "sub_issues": [
+            "Loan opened without my consent or knowledge",
+            "Fraudulent loan",
+        ],
+        "priority": "MEDIUM",
+        "volume_weight": 0.2,
     },
 ]
 
-REQUEST_DELAY_SECONDS = 0.5
-REQUEST_TIMEOUT_SECONDS = 30
-MAX_RETRIES = 3
-RETRY_WAIT_SECONDS = 5
+REQUEST_DELAY_SECONDS = float(os.getenv("CFPB_REQUEST_DELAY_SECONDS", "0.5"))
+REQUEST_TIMEOUT_SECONDS = int(os.getenv("CFPB_REQUEST_TIMEOUT_SECONDS", "30"))
+UPSERT_BATCH_SIZE = 500
 
 _HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": "public-urls-scam-alerts/1.0 (CFPB scam alert pipeline)",
     "Accept": "application/json",
 }
 
-# Page size for paginated record fetches
-PAGE_SIZE = 5000
 
-# Lookback used by fetch_trends (24 weeks for detection context)
-LOOKBACK_WEEKS = 24
+def get_supabase_client() -> Client:
+    repo_root = Path(__file__).resolve().parent.parent
+    load_dotenv(repo_root / ".env.local")
+    load_dotenv(repo_root / ".env")
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+    if not url or not key:
+        raise ValueError("Missing SUPABASE_URL and Supabase service/anon key.")
+    return create_client(url, key)
 
 
-# ── HTTP helper ────────────────────────────────────────────────────────────────
+def sunday_ending_week_containing(day: date) -> date:
+    return day + timedelta(days=(6 - day.weekday()) % 7)
 
-def _get_with_retry(params: dict[str, Any]) -> Any:
-    for attempt in range(1, MAX_RETRIES + 1):
+
+def _parse_date(value: Any) -> date | None:
+    if value is None:
+        return None
+    text = str(value).replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(text).date()
+    except ValueError:
         try:
-            response = requests.get(
-                CFPB_API_BASE,
-                params=params,
-                headers=_HEADERS,
-                timeout=REQUEST_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.Timeout:
-            print(f"  Timeout on attempt {attempt}/{MAX_RETRIES}")
-        except requests.exceptions.HTTPError as exc:
-            print(f"  HTTP {exc.response.status_code} on attempt {attempt}/{MAX_RETRIES}")
-        except Exception as exc:
-            print(f"  Request error on attempt {attempt}/{MAX_RETRIES}: {exc}")
-
-        if attempt < MAX_RETRIES:
-            time.sleep(RETRY_WAIT_SECONDS)
-
-    return None
+            return date.fromisoformat(str(value)[:10])
+        except ValueError:
+            return None
 
 
-# ── Record parsing ─────────────────────────────────────────────────────────────
+def _extract_trend_buckets(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if isinstance(payload.get("trend_period"), list):
+        return [
+            {"date": item.get("date") or item.get("key_as_string"), "count": item.get("count") or item.get("doc_count", 0)}
+            for item in payload["trend_period"]
+        ]
 
-def _extract_records(data: Any) -> list[dict[str, Any]]:
-    """
-    Extract the list of complaint records from an API response.
-
-    The CFPB API returns a flat list of complaint objects (each with a _source
-    key) rather than Elasticsearch-style aggregation buckets.
-    """
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        # Some response shapes nest records under a 'hits' key
-        hits = data.get("hits")
-        if isinstance(hits, list):
-            return hits
-        if isinstance(hits, dict):
-            inner = hits.get("hits")
-            if isinstance(inner, list):
-                return inner
+    aggregations = payload.get("aggregations") or {}
+    area = aggregations.get("dateRangeArea") or {}
+    buckets = (area.get("dateRangeArea") or {}).get("buckets")
+    if isinstance(buckets, list):
+        return [
+            {"date": item.get("date") or item.get("key_as_string"), "count": item.get("count") or item.get("doc_count", 0)}
+            for item in buckets
+        ]
     return []
 
 
-def _aggregate_records_by_week(
-    records: list[dict[str, Any]],
-    product: str,
-    sub_products: list[str],
-    issue: str,
-    scam_type: str,
-    state: str,
-) -> list[dict[str, Any]]:
-    """
-    Count complaints per week_ending from a flat list of raw complaint records.
+def _issue_filter(issue: str, sub_issue: str | None) -> str:
+    return f"{issue}\u2022{sub_issue}" if sub_issue else issue
 
-    Each record is expected to have a date_received field (YYYY-MM-DD or
-    similar ISO string) inside _source or at the top level.
-    """
-    week_counts: dict[str, int] = {}
 
-    for item in records:
-        src = item.get("_source") if isinstance(item, dict) else None
-        if src is None:
-            src = item
-
-        date_str = src.get("date_received") if isinstance(src, dict) else None
-        if not date_str:
-            continue
-
+def _get_trends(params: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    for attempt in (1, 2):
         try:
-            d = date.fromisoformat(str(date_str)[:10])
-        except ValueError:
-            continue
-
-        # Advance to the Sunday ending of this week
-        days_to_sunday = (6 - d.weekday()) % 7
-        week_ending = (d + timedelta(days=days_to_sunday)).isoformat()
-        week_counts[week_ending] = week_counts.get(week_ending, 0) + 1
-
-    rows: list[dict[str, Any]] = []
-    for week_ending, count in sorted(week_counts.items()):
-        rows.append(
-            {
-                "week_ending": week_ending,
-                "product": product,
-                "sub_product": sub_products[0] if len(sub_products) == 1 else None,
-                "issue": issue,
-                "scam_type": scam_type,
-                "state": state,
-                "report_count": count,
-            }
-        )
-
-    return rows
+            response = requests.get(TRENDS_ENDPOINT, params=params, headers=_HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
+            if response.status_code == 429 and attempt == 1:
+                print("  CFPB rate limited request; waiting 15 seconds before retry.")
+                time.sleep(15)
+                continue
+            response.raise_for_status()
+            return response.json(), None
+        except requests.exceptions.RequestException as exc:
+            if attempt == 1 and not isinstance(exc, requests.exceptions.HTTPError):
+                print(f"  CFPB connection error; retrying once: {exc}")
+                time.sleep(2)
+                continue
+            return None, str(exc)
+    return None, "request failed"
 
 
-# ── Single category fetch ──────────────────────────────────────────────────────
-
-def _fetch_category(
-    category: dict[str, Any],
-    date_min: str,
-    date_max: str,
-    state: str | None = None,
-) -> list[dict[str, Any]]:
-    """
-    Fetch all complaint records for one category over the given date range,
-    then aggregate into weekly row dicts.
-
-    The CFPB API returns raw records (not aggregation buckets), so we paginate
-    through all records using 'from' / 'size' and count by week ourselves.
-    """
-    product = category["product"]
-    issue = category["issue"]
-    sub_products = category.get("sub_products", [])
-
-    all_records: list[dict[str, Any]] = []
-    offset = 0
-
-    while True:
-        params: dict[str, Any] = {
-            "product": product,
-            "issue": issue,
-            "date_received_min": date_min,
-            "date_received_max": date_max,
-            "no_aggs": "true",
-            "format": "json",
-            "size": PAGE_SIZE,
-            "from": offset,
-        }
-
-        if len(sub_products) == 1:
-            params["sub_product"] = sub_products[0]
-
-        if state is not None:
-            params["state"] = state
-
-        data = _get_with_retry(params)
-        if data is None:
-            break
-
-        page = _extract_records(data)
-        all_records.extend(page)
-
-        if len(page) < PAGE_SIZE:
-            break
-
-        offset += PAGE_SIZE
-        time.sleep(REQUEST_DELAY_SECONDS)
-
-    return _aggregate_records_by_week(
-        records=all_records,
-        product=product,
-        sub_products=sub_products,
-        issue=issue,
-        scam_type=category["scam_type"],
-        state=state if state is not None else "NATIONAL",
-    )
+def _normalise_states(states: list[str] | str | None) -> list[str]:
+    if states is None:
+        return []
+    raw = states.split(",") if isinstance(states, str) else states
+    values = [str(item).strip().upper() for item in raw if str(item).strip()]
+    if any(item == "ALL" for item in values):
+        return ALL_STATES.copy()
+    return [item for item in values if item != "NATIONAL"]
 
 
-# ── Main entry point ───────────────────────────────────────────────────────────
+def _category_priority(scam_type: str) -> str:
+    for category in CFPB_SCAM_CATEGORIES:
+        if category["scam_type"] == scam_type:
+            return str(category["priority"])
+    return "LOW"
+
+
+def _upsert_cfpb_trends(client: Client, rows: list[dict[str, Any]]) -> int:
+    upserted = 0
+    for start in range(0, len(rows), UPSERT_BATCH_SIZE):
+        batch = rows[start : start + UPSERT_BATCH_SIZE]
+        try:
+            client.table("cfpb_trends").upsert(
+                batch,
+                on_conflict="week_ending,product,issue,scam_type,state",
+            ).execute()
+        except APIError as exc:
+            raise RuntimeError(
+                "cfpb_trends upsert failed. Apply the CFPB scam pipeline migration before running fetch_trends.py."
+            ) from exc
+        upserted += len(batch)
+    return upserted
+
 
 def fetch_cfpb_trends(
-    lookback_weeks: int = LOOKBACK_WEEKS,
-    states: list[str] | None = None,
-) -> list[dict[str, Any]]:
-    """
-    Pull weekly CFPB trend data for all 8 categories.
-
-    - National call (state='NATIONAL') for each category.
-    - Per-state calls for every state in `states` (defaults to ALL_STATES).
-
-    Returns a flat list of row dicts ready for build_cfpb_trends.py.
-    """
-    if states is None:
-        states = ALL_STATES
-
+    lookback_weeks: int = 52,
+    states: list[str] | str | None = None,
+    upsert: bool = True,
+) -> dict[str, Any]:
     today = date.today()
     date_min = (today - timedelta(weeks=lookback_weeks)).isoformat()
     date_max = today.isoformat()
+    state_codes = _normalise_states(states)
+    locations: list[tuple[str, str | None]] = [("NATIONAL", None)] + [(state, state) for state in state_codes]
 
     all_rows: list[dict[str, Any]] = []
-    total_calls = 0
+    insufficient: list[str] = []
+    call_count = 0
+    errors: list[str] = []
+    category_week_counts: dict[str, int] = {}
 
-    # ── National pass ──────────────────────────────────────────────────────────
-    print(f"Fetching national CFPB trends  ({len(CFPB_CATEGORIES)} categories)")
-    for cat in CFPB_CATEGORIES:
-        rows = _fetch_category(cat, date_min, date_max, state=None)
-        all_rows.extend(rows)
-        total_calls += 1
-        print(
-            f"  [NATIONAL] {cat['scam_type']:30s}  weeks={len(rows)}"
-        )
-        time.sleep(REQUEST_DELAY_SECONDS)
+    for category in CFPB_SCAM_CATEGORIES:
+        scam_type = str(category["scam_type"])
+        sub_issues = category.get("sub_issues") or [None]
+        category_counts: dict[tuple[str, str], int] = defaultdict(int)
 
-    # ── State pass ─────────────────────────────────────────────────────────────
-    print(
-        f"\nFetching state-level CFPB trends  "
-        f"({len(states)} states x {len(CFPB_CATEGORIES)} categories = "
-        f"{len(states) * len(CFPB_CATEGORIES)} calls)"
+        for state_label, state_filter in locations:
+            for sub_issue in sub_issues:
+                params: dict[str, Any] = {
+                    "product": category["product"],
+                    "issue": _issue_filter(str(category["issue"]), sub_issue),
+                    "sub_issue": sub_issue,
+                    "trend_by": "week",
+                    "trend_interval": "week",
+                    "lens": "overview",
+                    "date_received_min": date_min,
+                    "date_received_max": date_max,
+                    "no_aggs": "false",
+                    "format": "json",
+                }
+                if state_filter:
+                    params["state"] = state_filter
+
+                payload, error = _get_trends({k: v for k, v in params.items() if v is not None})
+                call_count += 1
+                if error:
+                    message = f"{scam_type} / {state_label} / {sub_issue or 'all sub-issues'}: {error}"
+                    errors.append(message)
+                    print(f"  ERROR {message}")
+                    time.sleep(REQUEST_DELAY_SECONDS)
+                    continue
+
+                buckets = _extract_trend_buckets(payload or {})
+                if not buckets:
+                    message = f"{scam_type} / {state_label} missing trend_period/dateRangeArea buckets"
+                    errors.append(message)
+                    print(f"  WARNING {message}")
+                    time.sleep(REQUEST_DELAY_SECONDS)
+                    continue
+
+                for bucket in buckets:
+                    bucket_date = _parse_date(bucket.get("date"))
+                    if bucket_date is None:
+                        continue
+                    week_ending = sunday_ending_week_containing(bucket_date).isoformat()
+                    category_counts[(week_ending, state_label)] += int(bucket.get("count") or 0)
+
+                time.sleep(REQUEST_DELAY_SECONDS)
+
+        category_rows = [
+            {
+                "week_ending": week_ending,
+                "product": category["product"],
+                "issue": category["issue"],
+                "scam_type": scam_type,
+                "priority": category["priority"],
+                "state": state_label,
+                "report_count": count,
+            }
+            for (week_ending, state_label), count in sorted(category_counts.items())
+        ]
+        all_rows.extend(category_rows)
+
+        national_rows = [row for row in category_rows if row["state"] == "NATIONAL"]
+        category_week_counts[scam_type] = len(national_rows)
+        if len(national_rows) < 16:
+            insufficient.append(scam_type)
+
+        if national_rows:
+            dates = [row["week_ending"] for row in national_rows]
+            counts = [int(row["report_count"]) for row in national_rows]
+            print(
+                f"{scam_type}: weeks={len(national_rows)} date_range={min(dates)} to {max(dates)} "
+                f"min_count={min(counts)} max_count={max(counts)} sufficient={len(national_rows) >= 16}"
+            )
+        else:
+            print(f"{scam_type}: weeks=0 date_range=N/A sufficient=False")
+
+    upserted = 0
+    if upsert and all_rows:
+        client = get_supabase_client()
+        upserted = _upsert_cfpb_trends(client, all_rows)
+
+    date_values = [row["week_ending"] for row in all_rows]
+    summary = {
+        "total_api_calls": call_count,
+        "total_weekly_data_points": len(all_rows),
+        "rows_upserted": upserted,
+        "date_range": f"{min(date_values)} to {max(date_values)}" if date_values else None,
+        "distinct_weeks_per_category": category_week_counts,
+        "insufficient_categories": insufficient,
+        "errors": errors,
+    }
+
+    print("\nCFPB trends fetch summary")
+    print(f"- Total API calls made: {call_count}")
+    print(f"- Total weekly data points collected: {len(all_rows)}")
+    print(f"- Rows upserted: {upserted}")
+    print(f"- Date range covered: {summary['date_range']}")
+    print("- Distinct weeks per category:")
+    for scam_type, weeks in category_week_counts.items():
+        print(f"  - {scam_type}: {weeks}")
+    print("- Categories with insufficient data (<16 weeks):")
+    print("  - " + (", ".join(insufficient) if insufficient else "None"))
+    return summary
+
+
+def _states_arg_default() -> str:
+    return os.getenv("CFPB_TRENDS_STATES", "NATIONAL")
+
+
+def main() -> dict[str, Any]:
+    parser = argparse.ArgumentParser(description="Fetch CFPB scam category trends and upsert to Supabase.")
+    parser.add_argument("--lookback-weeks", type=int, default=int(os.getenv("CFPB_TRENDS_LOOKBACK_WEEKS", "52")))
+    parser.add_argument(
+        "--states",
+        default=_states_arg_default(),
+        help="Comma-separated state codes, ALL for every state, or NATIONAL for national-only.",
     )
-
-    for state in states:
-        state_rows = 0
-        for cat in CFPB_CATEGORIES:
-            rows = _fetch_category(cat, date_min, date_max, state=state)
-            all_rows.extend(rows)
-            state_rows += len(rows)
-            total_calls += 1
-            time.sleep(REQUEST_DELAY_SECONDS)
-        print(f"  [{state}]  total_weeks={state_rows}")
-
-    print(
-        f"\nfetch_cfpb_trends complete: "
-        f"total_api_calls={total_calls}  "
-        f"total_data_points={len(all_rows)}"
+    parser.add_argument("--no-upsert", action="store_true")
+    args = parser.parse_args()
+    return fetch_cfpb_trends(
+        lookback_weeks=args.lookback_weeks,
+        states=args.states,
+        upsert=not args.no_upsert,
     )
-    return all_rows
-
-
-def main() -> list[dict[str, Any]]:
-    return fetch_cfpb_trends()
 
 
 if __name__ == "__main__":
-    rows = main()
-    print(f"Returned {len(rows)} trend rows")
-    if rows:
-        print(f"Date range: {min(r['week_ending'] for r in rows)} to {max(r['week_ending'] for r in rows)}")
-        from collections import Counter
-        scam_counts = Counter(r["scam_type"] for r in rows)
-        for scam_type, count in scam_counts.most_common():
-            print(f"  {scam_type}: {count} rows")
+    main()

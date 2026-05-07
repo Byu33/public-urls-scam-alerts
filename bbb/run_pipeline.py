@@ -253,9 +253,9 @@ def step_purge_narratives() -> dict[str, Any]:
 def step_cfpb_fetch_trends() -> dict[str, Any]:
     # Only fetch last 2 weeks — historical baseline already in cfpb_trends.
     # Weekly pipeline runs just need to add the current (and prior) week.
-    trend_data = cfpb_fetch_trends.fetch_cfpb_trends(lookback_weeks=2)
-    print(f"STEP 9 result: cfpb_trend_data_points={len(trend_data)}")
-    return {"trend_data": trend_data}
+    result = cfpb_fetch_trends.fetch_cfpb_trends(lookback_weeks=2)
+    print(f"STEP 9 result: cfpb_trend_data_points={result.get('total_weekly_data_points', 0)}")
+    return {"trend_data": result}
 
 
 def step_cfpb_build_trends(trend_data: list[dict[str, Any]]) -> dict[str, Any]:
@@ -270,9 +270,10 @@ def step_cfpb_build_trends(trend_data: list[dict[str, Any]]) -> dict[str, Any]:
 def step_cfpb_detect_anomalies() -> dict[str, Any]:
     client = cfpb_detect.get_supabase_client()
     df = cfpb_detect.pull_cfpb_trends(client)
-    national = cfpb_detect.detect_cfpb_anomalies_national(df, trace=False)
-    state = cfpb_detect.detect_cfpb_anomalies(df, trace=False)
+    national, _national_summary = cfpb_detect.detect_cfpb_anomalies_national(df, trace=False)
+    state, _state_summary = cfpb_detect.detect_cfpb_anomalies(df, trace=False)
     anomalies = cfpb_detect.merge_cfpb_results(national, state)
+    cfpb_detect.upsert_cfpb_anomaly_alerts(client, anomalies)
 
     tier_counts = Counter(a.get("alert_tier", "WATCH") for a in anomalies)
     print(
@@ -355,6 +356,9 @@ def step_cfpb_sample_narratives(
             "run_timestamp": run_timestamp,
             "product": anomaly.get("product"),
             "issue": anomaly.get("issue"),
+            "sub_issue": anomaly.get("sub_issue"),
+            "scam_type": anomaly.get("scam_type"),
+            "priority": anomaly.get("priority"),
             "state": anomaly.get("state"),
             "alert_tier": anomaly.get("alert_tier"),
             "scope": anomaly.get("scope"),
@@ -363,7 +367,10 @@ def step_cfpb_sample_narratives(
             "current_count": anomaly.get("current_count"),
             "week_ending": anomaly.get("week_ending"),
             "detection_level": anomaly.get("detection_level"),
+            "detection_window_short": anomaly.get("detection_window_short", 8),
+            "detection_window_long": anomaly.get("detection_window_long", 16),
             "top_company": anomaly.get("top_company"),
+            "top_sub_issue": anomaly.get("top_sub_issue"),
             "narrative_batch": None,
             "analysis_status": "pending_analysis",
         }
@@ -372,7 +379,10 @@ def step_cfpb_sample_narratives(
             alert_row["narrative_batch"] = sampled.get("batches")
 
         try:
-            client.table("cfpb_anomaly_alerts").insert(alert_row).execute()
+            client.table("cfpb_anomaly_alerts").upsert(
+                alert_row,
+                on_conflict="week_ending,scam_type,state,detection_level",
+            ).execute()
             inserted += 1
         except Exception:
             print(
