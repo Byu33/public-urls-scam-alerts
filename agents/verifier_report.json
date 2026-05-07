@@ -1,0 +1,44 @@
+{
+  "timestamp": "2026-05-07T08:35:23.566663+00:00",
+  "bbb_history_weeks": 58,
+  "cfpb_history_weeks": 28,
+  "bbb_records_today": 2742,
+  "cfpb_records_today": 14,
+  "table_row_counts": {
+    "bbb_scam_reports": 16818,
+    "bbb_trends": 34707,
+    "anomaly_alerts": 193,
+    "cfpb_trends": 4244,
+    "cfpb_complaints": 0,
+    "cfpb_anomaly_alerts": 0,
+    "local_crime_reports": 0,
+    "weekly_briefings": 18,
+    "pipeline_runs": 20
+  },
+  "bbb_anomalies_by_tier": {
+    "CRITICAL": 0,
+    "ALERT": 0,
+    "WATCH": 0
+  },
+  "cfpb_anomalies_by_tier": {
+    "CRITICAL": 0,
+    "ALERT": 0,
+    "WATCH": 0
+  },
+  "files_in_output": [],
+  "issues": [
+    "agents/builder_report.json was not present before verification.",
+    "Table count failed for local_crime_reports: HTTP 404 {\"code\":\"PGRST205\",\"details\":null,\"hint\":\"Perhaps you meant the table 'public.bbb_scam_reports'\",\"message\":\"Could not find the table 'public.local_crime_reports' in the schema cache\"}",
+    "anomaly_alerts does not expose analysis_status, so that requested breakdown could not be queried.",
+    "pipeline_runs does not expose run_date; using started_at as the closest available run timestamp.",
+    "cfpb_trends does not expose scam_type; breakdown was mapped from product/issue pairs.",
+    "local_crime_reports table could not be queried.",
+    "CFPB live API test used a reduced lookback instead of fetch_trends.py default 24 weeks.",
+    "CFPB live API test used national-only category calls instead of the full all-state sweep.",
+    "CFPB trend upsert failed: Out of range float values are not JSON compliant: nan",
+    "One or more CFPB categories returned zero weekly data points.",
+    "CFPB trend rows were not successfully upserted.",
+    "sharepoint_output folder does not exist."
+  ],
+  "overall_status": "NOT READY"
+}
