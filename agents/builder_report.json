@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-05-07T08:16:27.910422+00:00",
+  "tables_found": [
+    "bbb_scam_reports",
+    "bbb_trends",
+    "anomaly_alerts",
+    "weekly_briefings",
+    "pipeline_runs",
+    "cfpb_trends",
+    "cfpb_complaints",
+    "cfpb_anomaly_alerts"
+  ],
+  "tables_missing": [
+    "local_crime_reports"
+  ],
+  "scripts_found": [
+    "bbb/fetch_reports.py",
+    "bbb/build_trends.py",
+    "bbb/detect_anomalies.py",
+    "bbb/fetch_historical.py",
+    "bbb/generate_weekly_briefing.py",
+    "bbb/run_pipeline.py",
+    "bbb/sample_narratives.py",
+    "bbb/tests/cleanup_test_data.py",
+    "bbb/tests/diagnose_trends.py",
+    "bbb/tests/seed_test_data.py",
+    "bbb/tests/test_graph_auth.py",
+    "bbb/tests/verify_save.py",
+    "bbb/tests/verify_trends.py",
+    "cfpb/build_cfpb_trends.py",
+    "cfpb/detect_cfpb_anomalies.py",
+    "cfpb/fetch_cfpb_historical.py",
+    "cfpb/fetch_complaints.py",
+    "cfpb/fetch_trends.py",
+    "cfpb/sample_cfpb_narratives.py",
+    "database/purge_narratives.py"
+  ],
+  "scripts_broken": [],
+  "bbb_records_fetched": 2742,
+  "cfpb_records_fetched": 25,
+  "overall_status": "PASS"
+}
