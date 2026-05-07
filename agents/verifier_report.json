@@ -1,0 +1,78 @@
+{
+  "phase": "verifier",
+  "generated_at": "2026-05-07T08:29:37.332449+00:00",
+  "overall_status": "READY",
+  "steps": [
+    {
+      "script": "bbb/detect_anomalies.py",
+      "status": "PASS",
+      "elapsed_seconds": 2.12,
+      "output": "\nNo anomalies detected for the current week.\n",
+      "errors": "",
+      "result": {
+        "anomalies": [],
+        "anomalies_detected": 0,
+        "tier_counts": {
+          "CRITICAL": 0,
+          "ALERT": 0,
+          "WATCH": 0
+        }
+      }
+    },
+    {
+      "script": "cfpb/detect_cfpb_anomalies.py",
+      "status": "PASS",
+      "elapsed_seconds": 0.59,
+      "output": "\nNo CFPB anomalies detected for the current week.\n",
+      "errors": "",
+      "result": {
+        "anomalies": [],
+        "anomalies_detected": 0,
+        "tier_counts": {
+          "CRITICAL": 0,
+          "ALERT": 0,
+          "WATCH": 0
+        }
+      }
+    }
+  ],
+  "table_counts": {
+    "bbb_scam_reports": 16818,
+    "bbb_trends": 34707,
+    "anomaly_alerts": 193,
+    "weekly_briefings": 18,
+    "pipeline_runs": 20,
+    "cfpb_trends": 4244,
+    "cfpb_complaints": 0,
+    "cfpb_anomaly_alerts": 0
+  },
+  "sharepoint_output_files": [
+    "sharepoint_output/BBB_Anomalies.csv",
+    "sharepoint_output/CFPB_Anomalies.csv",
+    "sharepoint_output/Cross_Source_Signals.csv",
+    "sharepoint_output/Local_Crime_LA.csv",
+    "sharepoint_output/Local_Crime_LA.json",
+    "sharepoint_output/Pipeline_Phase_Status.csv",
+    "sharepoint_output/Scam_Intelligence_Briefing.xlsx",
+    "sharepoint_output/Supabase_Table_Counts.csv",
+    "sharepoint_output/Weekly_Briefing.md"
+  ],
+  "anomaly_summary": {
+    "bbb_anomalies_by_tier": {
+      "CRITICAL": 0,
+      "ALERT": 0,
+      "WATCH": 0
+    },
+    "cfpb_anomalies_by_tier": {
+      "CRITICAL": 0,
+      "ALERT": 0,
+      "WATCH": 0
+    },
+    "bbb_anomalies_total": 0,
+    "cfpb_anomalies_total": 0
+  },
+  "issues": [],
+  "warnings": [
+    "Supabase MCP server requires authentication, so table counts were queried through the repo Supabase client."
+  ]
+}

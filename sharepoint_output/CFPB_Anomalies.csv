@@ -1,0 +1,4 @@
+source,alert_tier,count
+CFPB,CRITICAL,0
+CFPB,ALERT,0
+CFPB,WATCH,0
