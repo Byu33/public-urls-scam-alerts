@@ -463,15 +463,6 @@ class Verifier:
                 rows = fetch_module.fetch_cfpb_trends(lookback_weeks=lookback_weeks, states=states)
             print(fetch_buf.getvalue())
             self.cfpb_records_today = len(rows)
-            build_buf = io.StringIO()
-            upsert_success = False
-            build_result: dict[str, Any] = {}
-            try:
-                with redirect_stdout(build_buf):
-                    build_result = build_module.build_cfpb_trends(rows)
-                upsert_success = int(build_result.get("upserted_rows", 0)) > 0
-            finally:
-                print(build_buf.getvalue())
             category_summaries = []
             any_zero = False
             for category in fetch_module.CFPB_CATEGORIES:
@@ -487,7 +478,6 @@ class Verifier:
                     "successfully_upserted": bool(upsert_success and category_rows),
                 }
                 category_summaries.append(summary)
-                print(json.dumps(summary, indent=2))
                 if not category_rows:
                     any_zero = True
                     print(f"Raw CFPB API response for zero category {scam_type}:")
@@ -512,6 +502,26 @@ class Verifier:
                         timeout=60,
                     )
                     print(raw_response.text[:5000])
+            build_buf = io.StringIO()
+            upsert_success = False
+            build_result: dict[str, Any] = {}
+            try:
+                with redirect_stdout(build_buf):
+                    build_result = build_module.build_cfpb_trends(rows)
+                upsert_success = int(build_result.get("upserted_rows", 0)) > 0
+            except Exception as exc:
+                print(traceback.format_exc())
+                self.add_issue(
+                    f"CFPB trend upsert failed: {exc}",
+                    "Sanitize null/NaN CFPB trend values before calling Supabase upsert.",
+                )
+            finally:
+                print(build_buf.getvalue())
+            for summary in category_summaries:
+                summary["successfully_upserted"] = bool(
+                    upsert_success and summary["weekly_data_points_returned"]
+                )
+                print(json.dumps(summary, indent=2))
             self.cfpb_live_summary = {
                 "total_rows_returned": len(rows),
                 "build_result": build_result,
