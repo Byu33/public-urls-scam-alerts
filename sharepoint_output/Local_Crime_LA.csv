@@ -1,0 +1,2 @@
+source,jurisdiction,state,week_start,week_end,category,incident_count,signal,status
+Los Angeles local public safety context,"Los Angeles, CA",CA,2026-04-30,2026-05-07,Fraud/Scam,0,No local crime feed configured in repository; placeholder context generated.,feed_not_configured
