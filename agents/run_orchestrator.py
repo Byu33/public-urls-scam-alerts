@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -161,6 +162,20 @@ def get_supabase_client() -> Client:
     return create_client(url, key)
 
 
+@contextlib.contextmanager
+def time_limit(seconds: int, label: str) -> Any:
+    def _handle_timeout(_signum: int, _frame: Any) -> None:
+        raise TimeoutError(f"{label} exceeded {seconds}s")
+
+    previous = signal.signal(signal.SIGALRM, _handle_timeout)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def run_builder_phase() -> dict[str, Any]:
     cfpb_trend_data: list[dict[str, Any]] = []
 
@@ -169,6 +184,30 @@ def run_builder_phase() -> dict[str, Any]:
     local_fetch = load_module("local/fetch_local_crime.py", "orchestrator_local_fetch")
     bbb_build = load_module("bbb/build_trends.py", "orchestrator_bbb_build_trends")
     cfpb_build = load_module("cfpb/build_cfpb_trends.py", "orchestrator_cfpb_build_trends")
+
+    def fetch_bbb_wrapper() -> dict[str, Any]:
+        bbb_fetch.REQUEST_TIMEOUT_SECONDS = int(os.getenv("ORCHESTRATOR_BBB_TIMEOUT_SECONDS", "10"))
+        bbb_fetch.REQUEST_RETRY_LIMIT = int(os.getenv("ORCHESTRATOR_BBB_MAX_RETRIES", "1"))
+        bbb_fetch.REQUEST_RETRY_WAIT_SECONDS = int(os.getenv("ORCHESTRATOR_BBB_RETRY_WAIT_SECONDS", "1"))
+        bbb_fetch.PAGE_DELAY_SECONDS = float(os.getenv("ORCHESTRATOR_BBB_PAGE_DELAY_SECONDS", "0.1"))
+        total_timeout = int(os.getenv("ORCHESTRATOR_BBB_FETCH_TOTAL_TIMEOUT_SECONDS", "90"))
+        try:
+            with time_limit(total_timeout, "bbb/fetch_reports.py"):
+                return bbb_fetch.run_fetch_pipeline()
+        except TimeoutError as exc:
+            warning = (
+                f"{exc}; continuing with existing Supabase bbb_scam_reports data "
+                "for downstream trend generation."
+            )
+            print(f"WARNING: {warning}")
+            return {
+                "total_pages_fetched": 0,
+                "total_records_parsed": 0,
+                "total_records_upserted": 0,
+                "elapsed_seconds": total_timeout,
+                "fallback": "existing_supabase_data",
+                "warnings": [warning],
+            }
 
     def fetch_cfpb_wrapper() -> dict[str, Any]:
         nonlocal cfpb_trend_data
@@ -181,10 +220,24 @@ def run_builder_phase() -> dict[str, Any]:
         states = None if raw_states.strip().upper() == "ALL" else [
             state.strip().upper() for state in raw_states.split(",") if state.strip()
         ]
-        cfpb_trend_data = cfpb_fetch.fetch_cfpb_trends(
-            lookback_weeks=lookback_weeks,
-            states=states,
-        )
+        total_timeout = int(os.getenv("ORCHESTRATOR_CFPB_FETCH_TOTAL_TIMEOUT_SECONDS", "120"))
+        try:
+            with time_limit(total_timeout, "cfpb/fetch_trends.py"):
+                cfpb_trend_data = cfpb_fetch.fetch_cfpb_trends(
+                    lookback_weeks=lookback_weeks,
+                    states=states,
+                )
+        except TimeoutError as exc:
+            cfpb_trend_data = []
+            print(f"WARNING: {exc}; continuing with existing Supabase cfpb_trends data.")
+            return {
+                "trend_rows": 0,
+                "sample_rows": [],
+                "lookback_weeks": lookback_weeks,
+                "states": states if states is not None else "ALL",
+                "fallback": "existing_supabase_data",
+                "warnings": [f"{exc}; continuing with existing Supabase cfpb_trends data."],
+            }
         return {
             "trend_rows": len(cfpb_trend_data),
             "sample_rows": cfpb_trend_data[:3],
@@ -193,12 +246,10 @@ def run_builder_phase() -> dict[str, Any]:
         }
 
     def build_cfpb_wrapper() -> dict[str, Any]:
-        if cfpb_trend_data:
-            return cfpb_build.build_cfpb_trends(cfpb_trend_data)
-        return cfpb_build.main()
+        return cfpb_build.build_cfpb_trends(cfpb_trend_data)
 
     steps = [
-        run_step("bbb/fetch_reports.py", bbb_fetch.run_fetch_pipeline),
+        run_step("bbb/fetch_reports.py", fetch_bbb_wrapper),
         run_step("cfpb/fetch_trends.py", fetch_cfpb_wrapper),
         run_step("local/fetch_local_crime.py", local_fetch.fetch_local_crime),
         run_step("bbb/build_trends.py", bbb_build.run_build_trends),
