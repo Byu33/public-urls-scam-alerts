@@ -1,0 +1,4 @@
+source,alert_tier,count
+BBB,CRITICAL,0
+BBB,ALERT,0
+BBB,WATCH,0

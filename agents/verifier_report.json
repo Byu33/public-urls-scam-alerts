@@ -1,44 +1,78 @@
 {
-  "timestamp": "2026-05-07T08:35:23.566663+00:00",
-  "bbb_history_weeks": 58,
-  "cfpb_history_weeks": 28,
-  "bbb_records_today": 2742,
-  "cfpb_records_today": 14,
-  "table_row_counts": {
+  "phase": "verifier",
+  "generated_at": "2026-05-07T08:45:58.137744+00:00",
+  "overall_status": "READY",
+  "steps": [
+    {
+      "script": "bbb/detect_anomalies.py",
+      "status": "PASS",
+      "elapsed_seconds": 2.49,
+      "output": "\nNo anomalies detected for the current week.\n",
+      "errors": "",
+      "result": {
+        "anomalies": [],
+        "anomalies_detected": 0,
+        "tier_counts": {
+          "CRITICAL": 0,
+          "ALERT": 0,
+          "WATCH": 0
+        }
+      }
+    },
+    {
+      "script": "cfpb/detect_cfpb_anomalies.py",
+      "status": "PASS",
+      "elapsed_seconds": 1.35,
+      "output": "\nNo CFPB anomalies detected for the current week.\n",
+      "errors": "",
+      "result": {
+        "anomalies": [],
+        "anomalies_detected": 0,
+        "tier_counts": {
+          "CRITICAL": 0,
+          "ALERT": 0,
+          "WATCH": 0
+        }
+      }
+    }
+  ],
+  "table_counts": {
     "bbb_scam_reports": 16818,
     "bbb_trends": 34707,
     "anomaly_alerts": 193,
+    "weekly_briefings": 18,
+    "pipeline_runs": 20,
     "cfpb_trends": 4244,
     "cfpb_complaints": 0,
-    "cfpb_anomaly_alerts": 0,
-    "local_crime_reports": 0,
-    "weekly_briefings": 18,
-    "pipeline_runs": 20
+    "cfpb_anomaly_alerts": 0
   },
-  "bbb_anomalies_by_tier": {
-    "CRITICAL": 0,
-    "ALERT": 0,
-    "WATCH": 0
-  },
-  "cfpb_anomalies_by_tier": {
-    "CRITICAL": 0,
-    "ALERT": 0,
-    "WATCH": 0
-  },
-  "files_in_output": [],
-  "issues": [
-    "agents/builder_report.json was not present before verification.",
-    "Table count failed for local_crime_reports: HTTP 404 {\"code\":\"PGRST205\",\"details\":null,\"hint\":\"Perhaps you meant the table 'public.bbb_scam_reports'\",\"message\":\"Could not find the table 'public.local_crime_reports' in the schema cache\"}",
-    "anomaly_alerts does not expose analysis_status, so that requested breakdown could not be queried.",
-    "pipeline_runs does not expose run_date; using started_at as the closest available run timestamp.",
-    "cfpb_trends does not expose scam_type; breakdown was mapped from product/issue pairs.",
-    "local_crime_reports table could not be queried.",
-    "CFPB live API test used a reduced lookback instead of fetch_trends.py default 24 weeks.",
-    "CFPB live API test used national-only category calls instead of the full all-state sweep.",
-    "CFPB trend upsert failed: Out of range float values are not JSON compliant: nan",
-    "One or more CFPB categories returned zero weekly data points.",
-    "CFPB trend rows were not successfully upserted.",
-    "sharepoint_output folder does not exist."
+  "sharepoint_output_files": [
+    "sharepoint_output/BBB_Anomalies.csv",
+    "sharepoint_output/CFPB_Anomalies.csv",
+    "sharepoint_output/Cross_Source_Signals.csv",
+    "sharepoint_output/Local_Crime_LA.csv",
+    "sharepoint_output/Local_Crime_LA.json",
+    "sharepoint_output/Pipeline_Phase_Status.csv",
+    "sharepoint_output/Scam_Intelligence_Briefing.xlsx",
+    "sharepoint_output/Supabase_Table_Counts.csv",
+    "sharepoint_output/Weekly_Briefing.md"
   ],
-  "overall_status": "NOT READY"
+  "anomaly_summary": {
+    "bbb_anomalies_by_tier": {
+      "CRITICAL": 0,
+      "ALERT": 0,
+      "WATCH": 0
+    },
+    "cfpb_anomalies_by_tier": {
+      "CRITICAL": 0,
+      "ALERT": 0,
+      "WATCH": 0
+    },
+    "bbb_anomalies_total": 0,
+    "cfpb_anomalies_total": 0
+  },
+  "issues": [],
+  "warnings": [
+    "Supabase MCP server requires authentication, so table counts were queried through the repo Supabase client."
+  ]
 }

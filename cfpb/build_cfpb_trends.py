@@ -43,6 +43,10 @@ def to_sunday(d: date) -> date:
     return d + timedelta(days=days_to_sunday)
 
 
+def _none_if_missing(value: Any) -> Any:
+    return None if pd.isna(value) else value
+
+
 # ── Aggregation ────────────────────────────────────────────────────────────────
 
 def aggregate_trend_rows(raw_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -71,7 +75,7 @@ def aggregate_trend_rows(raw_rows: list[dict[str, Any]]) -> list[dict[str, Any]]
     for _, row in df.iterrows():
         key = (row["week_ending"], row["product"], row["issue"], row["state"])
         if key not in sub_product_map:
-            sub_product_map[key] = row.get("sub_product")
+            sub_product_map[key] = _none_if_missing(row.get("sub_product"))
 
     agg = (
         df.groupby(["week_ending", "product", "issue", "state"], dropna=False)["report_count"]
@@ -86,7 +90,7 @@ def aggregate_trend_rows(raw_rows: list[dict[str, Any]]) -> list[dict[str, Any]]
             {
                 "week_ending": row["week_ending"].isoformat() if pd.notna(row["week_ending"]) else None,
                 "product": str(row["product"]),
-                "sub_product": sub_product_map.get(key),
+                "sub_product": _none_if_missing(sub_product_map.get(key)),
                 "issue": str(row["issue"]),
                 "state": str(row["state"]),
                 "report_count": int(row["report_count"]),

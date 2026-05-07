@@ -1,0 +1,77 @@
+{
+  "phase": "quality",
+  "generated_at": "2026-05-07T08:29:38.028612+00:00",
+  "overall_status": "HOLD",
+  "narrative_samples": [
+    {
+      "id": "1249546",
+      "reported_date": "2026-04-08",
+      "scam_type": "Advance Fee Loan",
+      "state": "TX",
+      "narrative": null
+    },
+    {
+      "id": "1224752",
+      "reported_date": "2026-03-17",
+      "scam_type": "Online Purchase",
+      "state": "OK",
+      "narrative": null
+    },
+    {
+      "id": "1249226",
+      "reported_date": "2026-04-08",
+      "scam_type": "Advance Fee Loan",
+      "state": "TX",
+      "narrative": null
+    },
+    {
+      "id": "1250061",
+      "reported_date": "2026-04-09",
+      "scam_type": "Debt Collections",
+      "state": "GA",
+      "narrative": null
+    },
+    {
+      "id": "1249198",
+      "reported_date": "2026-04-08",
+      "scam_type": "Advance Fee Loan",
+      "state": "NJ",
+      "narrative": null
+    }
+  ],
+  "deviation_score_ranges": {
+    "min": null,
+    "max": null,
+    "count": 0
+  },
+  "alert_tier_distribution": {
+    "bbb": {
+      "CRITICAL": 0,
+      "ALERT": 0,
+      "WATCH": 0
+    },
+    "cfpb": {
+      "CRITICAL": 0,
+      "ALERT": 0,
+      "WATCH": 0
+    }
+  },
+  "state_code_validity": {
+    "invalid_states": {
+      "bbb_scam_reports": [
+        "AB",
+        "BC"
+      ],
+      "cfpb_trends": []
+    },
+    "valid": false
+  },
+  "cross_source_signals": {
+    "count": 0,
+    "signals": []
+  },
+  "issues": [
+    "Invalid state codes in bbb_scam_reports: AB, BC"
+  ],
+  "warnings": []
+}

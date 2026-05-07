@@ -1,0 +1,5 @@
+phase,status
+Builder,PASS
+Verifier,READY
+Data Quality,HOLD
+Output,PASS

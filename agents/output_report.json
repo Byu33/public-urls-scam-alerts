@@ -1,0 +1,53 @@
+{
+  "phase": "output",
+  "generated_at": "2026-05-07T08:29:38.089870+00:00",
+  "overall_status": "PASS",
+  "steps": [
+    {
+      "script": "output/write_to_excel.py",
+      "status": "PASS",
+      "elapsed_seconds": 0.06,
+      "output": "{\n  \"overall_status\": \"PASS\",\n  \"files\": [\n    \"sharepoint_output/BBB_Anomalies.csv\",\n    \"sharepoint_output/CFPB_Anomalies.csv\",\n    \"sharepoint_output/Cross_Source_Signals.csv\",\n    \"sharepoint_output/Local_Crime_LA.csv\",\n    \"sharepoint_output/Local_Crime_LA.json\",\n    \"sharepoint_output/Pipeline_Phase_Status.csv\",\n    \"sharepoint_output/Scam_Intelligence_Briefing.xlsx\",\n    \"sharepoint_output/Supabase_Table_Counts.csv\",\n    \"sharepoint_output/Weekly_Briefing.md\"\n  ],\n  \"excel_file\": \"sharepoint_output/Scam_Intelligence_Briefing.xlsx\",\n  \"briefing_file\": \"sharepoint_output/Weekly_Briefing.md\"\n}\n",
+      "errors": "",
+      "result": {
+        "overall_status": "PASS",
+        "files": [
+          "sharepoint_output/BBB_Anomalies.csv",
+          "sharepoint_output/CFPB_Anomalies.csv",
+          "sharepoint_output/Cross_Source_Signals.csv",
+          "sharepoint_output/Local_Crime_LA.csv",
+          "sharepoint_output/Local_Crime_LA.json",
+          "sharepoint_output/Pipeline_Phase_Status.csv",
+          "sharepoint_output/Scam_Intelligence_Briefing.xlsx",
+          "sharepoint_output/Supabase_Table_Counts.csv",
+          "sharepoint_output/Weekly_Briefing.md"
+        ],
+        "excel_file": "sharepoint_output/Scam_Intelligence_Briefing.xlsx",
+        "briefing_file": "sharepoint_output/Weekly_Briefing.md"
+      }
+    }
+  ],
+  "required_files": [
+    "Weekly_Briefing.md",
+    "Scam_Intelligence_Briefing.xlsx",
+    "BBB_Anomalies.csv",
+    "CFPB_Anomalies.csv",
+    "Cross_Source_Signals.csv",
+    "Pipeline_Phase_Status.csv",
+    "Supabase_Table_Counts.csv",
+    "Local_Crime_LA.csv"
+  ],
+  "files": [
+    "sharepoint_output/BBB_Anomalies.csv",
+    "sharepoint_output/CFPB_Anomalies.csv",
+    "sharepoint_output/Cross_Source_Signals.csv",
+    "sharepoint_output/Local_Crime_LA.csv",
+    "sharepoint_output/Local_Crime_LA.json",
+    "sharepoint_output/Pipeline_Phase_Status.csv",
+    "sharepoint_output/Scam_Intelligence_Briefing.xlsx",
+    "sharepoint_output/Supabase_Table_Counts.csv",
+    "sharepoint_output/Weekly_Briefing.md"
+  ],
+  "issues": [],
+  "warnings": []
+}

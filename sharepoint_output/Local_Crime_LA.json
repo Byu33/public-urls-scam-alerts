@@ -1,0 +1,13 @@
+[
+  {
+    "source": "Los Angeles local public safety context",
+    "jurisdiction": "Los Angeles, CA",
+    "state": "CA",
+    "week_start": "2026-04-30",
+    "week_end": "2026-05-07",
+    "category": "Fraud/Scam",
+    "incident_count": 0,
+    "signal": "No local crime feed configured in repository; placeholder context generated.",
+    "status": "feed_not_configured"
+  }
+]
