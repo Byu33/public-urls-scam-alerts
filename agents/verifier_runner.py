@@ -442,9 +442,18 @@ class Verifier:
         try:
             fetch_module = self.load_module("cfpb_fetch_trends_verifier", REPO_ROOT / "cfpb" / "fetch_trends.py")
             build_module = self.load_module("cfpb_build_trends_verifier", REPO_ROOT / "cfpb" / "build_cfpb_trends.py")
+            lookback_weeks = int(
+                os.environ.get("VERIFIER_CFPB_LOOKBACK_WEEKS", str(fetch_module.LOOKBACK_WEEKS))
+            )
+            if lookback_weeks != fetch_module.LOOKBACK_WEEKS:
+                self.add_issue(
+                    "CFPB live API test used a reduced lookback instead of fetch_trends.py default "
+                    f"{fetch_module.LOOKBACK_WEEKS} weeks.",
+                    "Stream or aggregate CFPB category fetches so the full default lookback can run without high memory use.",
+                )
             fetch_buf = io.StringIO()
             with redirect_stdout(fetch_buf):
-                rows = fetch_module.fetch_cfpb_trends()
+                rows = fetch_module.fetch_cfpb_trends(lookback_weeks=lookback_weeks)
             print(fetch_buf.getvalue())
             self.cfpb_records_today = len(rows)
             build_buf = io.StringIO()
@@ -479,7 +488,7 @@ class Verifier:
                     params: dict[str, Any] = {
                         "product": category["product"],
                         "issue": category["issue"],
-                        "date_received_min": (today - timedelta(weeks=fetch_module.LOOKBACK_WEEKS)).isoformat(),
+                        "date_received_min": (today - timedelta(weeks=lookback_weeks)).isoformat(),
                         "date_received_max": today.isoformat(),
                         "no_aggs": "true",
                         "format": "json",
