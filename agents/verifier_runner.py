@@ -451,9 +451,16 @@ class Verifier:
                     f"{fetch_module.LOOKBACK_WEEKS} weeks.",
                     "Stream or aggregate CFPB category fetches so the full default lookback can run without high memory use.",
                 )
+            states_mode = os.environ.get("VERIFIER_CFPB_STATES_MODE", "all").lower()
+            states = [] if states_mode == "national" else None
+            if states_mode == "national":
+                self.add_issue(
+                    "CFPB live API test used national-only category calls instead of the full all-state sweep.",
+                    "Add progress logging and bounded per-call memory so the full all-state CFPB live sweep can complete in verifier runs.",
+                )
             fetch_buf = io.StringIO()
             with redirect_stdout(fetch_buf):
-                rows = fetch_module.fetch_cfpb_trends(lookback_weeks=lookback_weeks)
+                rows = fetch_module.fetch_cfpb_trends(lookback_weeks=lookback_weeks, states=states)
             print(fetch_buf.getvalue())
             self.cfpb_records_today = len(rows)
             build_buf = io.StringIO()
