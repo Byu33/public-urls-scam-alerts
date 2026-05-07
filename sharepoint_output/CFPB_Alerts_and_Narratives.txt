@@ -1,0 +1,241 @@
+CFPB ALERTS AND NARRATIVES
+Generated at: 2026-05-07T15:48:02.375978+00:00
+Trend rows loaded: 6812
+Alert count: 8
+Tier counts: CRITICAL=1, ALERT=3, WATCH=4
+
+========================================================================================
+ALERT 1: CRITICAL | RI | Managing an account
+========================================================================================
+Product: Checking or savings account
+Issue: Managing an account
+State: RI
+Week ending: 2026-04-26
+Detection level: State
+Scope: Local
+Current count: 8
+Short deviation: +4.439
+Long deviation: +4.125
+Complaints fetched: 25
+Top company: CITIZENS FINANCIAL GROUP, INC.
+Narratives:
+  1. Citibank is currently holding {$390000.00} belonging to my company, XXXX XXXX XXXX XXXX, in ledger
+      status for over three months without resolution. On XX/XX/XXXX, my company received a
+      legitimate wire transfer of {$390000.00} from a U.S. customer as payment for electronic goods.
+      On XX/XX/XXXX, I attempted to send {$180000.00} to my supplier in XXXX to fulfill the order,
+      but the transfer was returned. Shortly after, Citibank restricted and closed my account.
+      Representatives confirmed that the funds remain in ledger status under internal review. The
+      funds have not been returned to the sender and no cashiers check has been issued. In
+      XX/XX/XXXX, I visited a Citibank branch and spent several hours with the branch president
+      attempting to provide documentation, but my documents were not accepted. A case was opened
+      under reference number XXXX. Despite my efforts, the funds remain held with no clear
+      resolution. I have attached a complete transaction verification package demonstrating the
+      legitimacy of the funds and request that Citibank complete its review and release the funds.
+
+========================================================================================
+ALERT 2: ALERT | CT | Problem with a lender or other company charging your account
+========================================================================================
+Product: Checking or savings account
+Issue: Problem with a lender or other company charging your account
+State: CT
+Week ending: 2026-04-26
+Detection level: State
+Scope: Local
+Current count: 6
+Short deviation: +2.711
+Long deviation: +1.903
+Complaints fetched: 21
+Top company: Chime Financial Inc
+Narratives:
+  1. I opened a business savings account years ago. I noticed that recently a {$10.00} per month fee was
+      being charged by the bank to have this account. I called and was informed that they changed
+      the account agreement so that an average minimum balance over the course of 30 days was needed
+      for them to waive the fee. I asked them to provide any evidence that I was informed or
+      consented to the terms of the account and they could not. I have since closed the account but
+      I would like the unauthorized charges returned to me. Because I have closed the account I no
+      longer have access to those bank records online.
+
+========================================================================================
+ALERT 3: ALERT | CT | False statements or representation
+========================================================================================
+Product: Debt collection
+Issue: False statements or representation
+State: CT
+Week ending: 2026-04-26
+Detection level: State
+Scope: Local
+Current count: 9
+Short deviation: +2.500
+Long deviation: +1.984
+Complaints fetched: 25
+Top company: Resurgent Capital Services L.P.
+Narratives:
+  1. The company is reporting inaccurate information on my credit report, which is negatively impacting
+      my XXXX XXXX. I became aware of this issue recently and reviewed the account details, which do
+      not accurately reflect my records. I have made efforts to address this by reviewing my payment
+      history and monitoring my credit report, but the inaccurate information remains. As of now,
+      the account is still being reported incorrectly, including details related to balance/payment
+      status. I am requesting that the company thoroughly investigate this matter and either correct
+      the inaccurate information or remove the account entirely if it can not be properly verified.
+  2. To : Credit Collection Services Inc XXXX. XXXX XXXX XXXX, MA XXXXXXXX XXXX : FORMAL NOTICE OF
+      DISPUTE, REQUEST FOR VALIDATION, AND DEMAND TO CEASE REPORTING To Whom It May Concern, I am
+      writing regarding an alleged debt that your company claims I owe. This letter serves as a
+      formal dispute of the validity of the alleged debt and a request for full validation pursuant
+      to the Fair Debt Collection Practices Act ( FDCPA ), 15 U.S.C. XXXXg, and the Fair Credit
+      Reporting Act ( FCRA ), 15 U.S.C. XXXX et seq. The account in question was reportedly charged
+      off by the original creditor more than XXXX and XXXX XXXX ( XXXX ) years ago and has since
+      been circulated among multiple thirdparty collection agencies. The continued reporting and
+      attempts to collect on this account have caused significant financial harm, including damage
+      to my creditworthiness, higher interest rates, reduced access to financial opportunities, and
+      ongoing emotional distress. Under federal and applicable Connecticut consumer protection laws,
+      I hereby demand the following : XXXX. Provide complete validation of the alleged debt,
+      including : The name and address of the original creditor The original account number A
+      complete payment history The amount allegedly owed, including itemized interest and fees
+      Copies of any signed agreement bearing my signature that creates a legal obligation
+      Documentation showing your legal authority and chain of assignment to collect this debt XXXX.
+      Cease all collection activity until the requested validation is provided. XXXX. Immediately
+      cease reporting this account to any credit reporting agencies until such time as the debt has
+      been properly validated. XXXX. If your company can not fully validate the debt, you must
+      immediately delete any tradeline or reporting associated with this account from all credit
+      reporting agencies. Please be advised that reporting information to credit reporting agencies
+      that you know, or should know, is inaccurate or can not be verified may constitute violations
+      of the FCRA. Furthermore, continued collection attempts without proper validation may violate
+      the FDCPA. Should your company fail to comply with these requests, I reserve the right to
+      pursue all remedies available to me under federal and Connecticut law, including filing
+      complaints with the Consumer Financial Protection Bureau ( CFPB ), the Federal Trade
+      Commission ( FTC ), the Connecticut Attorney Generals Office, and pursuing private legal
+      action for damages. This letter is not a refusal to pay, but a notice that the alleged debt is
+      disputed and must be validated. Please respond in writing within XXXX ( XXXX ) days of receipt
+      of this notice.
+
+========================================================================================
+ALERT 4: ALERT | MD | Fraud or scam
+========================================================================================
+Product: Money transfer, virtual currency, or money service
+Issue: Fraud or scam
+State: MD
+Week ending: 2026-04-26
+Detection level: State
+Scope: Local
+Current count: 8
+Short deviation: +2.350
+Long deviation: +0.762
+Complaints fetched: 25
+Top company: Block, Inc.
+Narratives:
+  1. On XX/XX/XXXX, I was the victim of an imposter scam involving XXXX. I received an email falsely
+      claiming to be from XXXX, stating my account was being " upgraded to a Business user account
+      '' and that I needed to refund an " accidental overpayment '' of {$500.00}. The email
+      instructed me to send {$500.00} via XXXX to complete the upgrade. I was tricked into sending
+      {$500.00} from my Wells Fargo account. I reported the fraud to Wells Fargo on the same day (
+      XX/XX/XXXXXXXX ) and provided the original scam email as evidence. My claim number is XXXX. On
+      XX/XX/XXXX, I submitted additional evidence to Wells Fargo. On XX/XX/XXXX, I filed a police
+      report ( Case Number XXXX ) in Maryland and submitted it to Wells Fargo. On or around
+      XX/XX/XXXX, Wells Fargo declined my fraud claim. The bank refused to reimburse the {$500.00}
+      despite the XXXX XXXX XXXX XXXX ( effective XX/XX/XXXXXXXX ) requiring participating banks to
+      reimburse consumers for imposter scams. Wells Fargo has violated Regulation E of the
+      Electronic Fund Transfer Act because my authorization was obtained through criminal deception,
+      which is not valid consent under federal law. The bank failed to properly investigate the
+      context of the scam and wrongfully denied my claim. I am requesting that Wells Fargo reverse
+      the denial and reimburse the full {$500.00}.
+
+========================================================================================
+ALERT 5: WATCH | IL | Getting a credit card
+========================================================================================
+Product: Credit card
+Issue: Getting a credit card
+State: IL
+Week ending: 2026-04-26
+Detection level: State
+Scope: Local
+Current count: 15
+Short deviation: +1.837
+Long deviation: +1.932
+Complaints fetched: 15
+Top company: TRANSUNION INTERMEDIATE HOLDINGS, INC.
+Narratives:
+  No unexpired narratives were available for this alert.
+
+========================================================================================
+ALERT 6: WATCH | NC | Getting a credit card
+========================================================================================
+Product: Credit card
+Issue: Getting a credit card
+State: NC
+Week ending: 2026-04-26
+Detection level: State
+Scope: Local
+Current count: 5
+Short deviation: +1.788
+Long deviation: +0.284
+Complaints fetched: 15
+Top company: CAPITAL ONE FINANCIAL CORPORATION
+Narratives:
+  1. I did not apply for this credit card, and I did not authorize it to be opened in my name. This is
+      the second time a credit card has been opened using my information without my knowledge. I
+      believe I am a victim of identity theft, and I am requesting that this occurrence be
+      investigated, closed, and removed from my credit report. The bank listed is Military StarXXXX
+      and the amount currently showing is {$1300.00}. The person who opened this account appears to
+      have access to my personal information, including my home address, social security number, and
+      email address connected to my account. Most of the transactions on this account appear to have
+      been made in base at XXXX XXXX in XXXX, NC.
+
+========================================================================================
+ALERT 7: WATCH | IN | Fraud or scam
+========================================================================================
+Product: Money transfer, virtual currency, or money service
+Issue: Fraud or scam
+State: IN
+Week ending: 2026-04-26
+Detection level: State
+Scope: Local
+Current count: 5
+Short deviation: +1.050
+Long deviation: +0.681
+Complaints fetched: 15
+Top company: Block, Inc.
+Narratives:
+  No unexpired narratives were available for this alert.
+
+========================================================================================
+ALERT 8: WATCH | NE | Managing an account
+========================================================================================
+Product: Checking or savings account
+Issue: Managing an account
+State: NE
+Week ending: 2026-04-26
+Detection level: State
+Scope: Local
+Current count: 6
+Short deviation: +0.482
+Long deviation: +1.073
+Complaints fetched: 15
+Top company: WELLS FARGO & COMPANY
+Narratives:
+  1. I am the rightful payee of a {$25000.00} settlement check that was forged and unlawfully deposited
+      into a Wells Fargo business account. The check was issued as a result of a legal settlement,
+      but my former attorney forged my signature and deposited the full amount into their own
+      business account at Wells Fargo rather than a client trust account. I have contacted Wells
+      Fargos fraud department multiple times to report this unauthorized deposit and forgery.
+      Despite providing the details of the misappropriated funds, I have received no response or
+      assistance. Wells Fargo allowed a check with a forged endorsement to be deposited into an
+      account where the name did not match the payee, failing their due diligence and " know your
+      customer '' ( XXXX ) requirements.
+  2. XXXX XXXX : Citibank , N.A . Issue : Opening, closing, or managing an account / Problem with a
+      closed account Description of Incident My wife and I attempted to deposit a state income tax
+      refund check in the amount of {$800.00} into my Citibank account via mobile deposit. The
+      following day, Citibank flagged the deposit as fraudulent, informed us they were closing the
+      account immediately, and stated they would not honor the check. Because Citibank explicitly
+      stated the account was being closed and the check was rejected/flagged, we sought to cash the
+      check elsewhere. A local bank branch cashed the check for us. However, several days later,
+      that local bank informed us the check had " bounced '' because it had already been paidmeaning
+      Citibank actually processed and kept the funds despite telling me the account was closed for
+      fraud. Currently, Citibank is holding our {$800.00} state refund in a closed account that I
+      can not access. I have made multiple attempts to resolve this with customer service, but they
+      refuse to escalate the call to a manager or provide a timeline for the return of our funds.
+      Because Citibank claimed the check was fraudulent but then collected the funds anyway, they
+      have caused a secondary financial crisis with our local bank. Desired Resolution I am
+      requesting that Citibank immediately release the $ XXXXwhich they confirmed was " fraudulent
+      '' yet successfully collected from the statevia a cashiers check sent to our address on file
+      so that we can reimburse the local institution. I also request a formal explanation as to why
+      the funds were seized after the account was designated for closure.
