@@ -463,6 +463,8 @@ class Verifier:
                 rows = fetch_module.fetch_cfpb_trends(lookback_weeks=lookback_weeks, states=states)
             print(fetch_buf.getvalue())
             self.cfpb_records_today = len(rows)
+            upsert_success = False
+            build_result: dict[str, Any] = {}
             category_summaries = []
             any_zero = False
             for category in fetch_module.CFPB_CATEGORIES:
@@ -503,8 +505,6 @@ class Verifier:
                     )
                     print(raw_response.text[:5000])
             build_buf = io.StringIO()
-            upsert_success = False
-            build_result: dict[str, Any] = {}
             try:
                 with redirect_stdout(build_buf):
                     build_result = build_module.build_cfpb_trends(rows)
