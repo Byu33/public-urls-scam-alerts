@@ -1,0 +1,24 @@
+CFPB Alerts and Alert Narratives
+Generated: 2026-05-07
+
+Result
+------
+No alerts were generated from the CFPB pipeline.
+
+Alert Summary
+-------------
+CRITICAL: 0
+ALERT: 0
+WATCH: 0
+Total: 0
+
+Alert Narratives
+----------------
+No alert narratives are available because the CFPB pipeline generated no alerts.
+
+Verification Sources
+--------------------
+- Supabase cfpb_anomaly_alerts row count: 0
+- sharepoint_output/CFPB_Anomalies.csv: CRITICAL=0, ALERT=0, WATCH=0
+- sharepoint_output/Supabase_Table_Counts.csv: cfpb_anomaly_alerts=0, cfpb_complaints=0
+- agents/verifier_report.json: CFPB anomalies detected=0
