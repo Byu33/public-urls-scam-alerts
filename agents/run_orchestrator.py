@@ -310,6 +310,13 @@ def run_builder_phase() -> dict[str, Any]:
     bbb_fetch_result = steps[0].get("result") if steps else {}
     cfpb_fetch_result = steps[1].get("result") if len(steps) > 1 else {}
     local_result = steps[2].get("result") if len(steps) > 2 else {}
+    bbb_build_result = steps[3].get("result") if len(steps) > 3 else {}
+    bbb_record_count = int(
+        (bbb_fetch_result or {}).get("total_records_upserted")
+        or (bbb_fetch_result or {}).get("total_records_parsed")
+        or (bbb_build_result or {}).get("source_rows")
+        or 0
+    )
 
     report = {
         "phase": "builder",
@@ -319,11 +326,7 @@ def run_builder_phase() -> dict[str, Any]:
         "issues": issues,
         "warnings": warnings,
         "data_summary": {
-            "bbb_records_ingested": int(
-                (bbb_fetch_result or {}).get("total_records_upserted")
-                or (bbb_fetch_result or {}).get("total_records_parsed")
-                or 0
-            ),
+            "bbb_records_ingested": bbb_record_count,
             "cfpb_records_ingested": int((cfpb_fetch_result or {}).get("trend_rows") or 0),
             "local_crime_records": int((local_result or {}).get("records") or 0),
         },
@@ -689,6 +692,7 @@ def final_report(started_at: float) -> str:
     attention: list[str] = []
     for report in (builder, verifier, quality, output):
         attention.extend(report.get("issues", []) or [])
+        attention.extend(report.get("warnings", []) or [])
     if quality_status == "HOLD" and not quality.get("issues"):
         attention.append("Data quality is HOLD.")
     status = "BRIEFING READY" if not attention and builder_status == "PASS" and verifier_status == "PASS" and output_status == "PASS" else "NEEDS ATTENTION"
