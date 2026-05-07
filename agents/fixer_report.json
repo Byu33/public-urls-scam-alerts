@@ -1,0 +1,28 @@
+{
+  "timestamp": "2026-05-07T08:48:12Z",
+  "issues_found": 5,
+  "blockers_fixed": 1,
+  "errors_fixed": 0,
+  "warnings_fixed": 0,
+  "issues_requiring_human": [
+    {
+      "severity": "BLOCKER",
+      "issue": "Requested upstream agent reports are missing: agents/builder_report.json, agents/verifier_report.json, agents/quality_report.json, agents/health_report.json.",
+      "explanation": "The fixer could not extract overall_status, issues, failed_checks, blockers, or specific error messages from reports that do not exist in the repository. Provide the missing report JSON files if there are additional reported issues to repair."
+    }
+  ],
+  "reruns_passed": [
+    "Installed dependencies from requirements.txt and verified imports for requests, bs4, dotenv, supabase, pandas, openpyxl, and msal.",
+    "Verified from supabase import create_client succeeds after dependency installation.",
+    "Verified required Supabase tables are queryable: bbb_scam_reports, bbb_trends, pipeline_runs, anomaly_alerts, weekly_briefings, cfpb_trends, cfpb_anomaly_alerts.",
+    "Fetched the live BBB Scam Tracker URL for the current 7-day window, printed the first 2000 HTML characters, and parsed 10 hits from the first page.",
+    "Ran BBB scraper pagination until more than 980 records were parsed; stopped the long verification run after confirming the zero-record failure mode is not present.",
+    "Fetched the CFPB complaints API for the first configured category, printed the JSON response, extracted 110 records, and aggregated 3 weekly trend rows.",
+    "Verified bbb_trends contains 34707 rows across 58 distinct weeks and cfpb_trends contains 4244 rows across 28 distinct weeks.",
+    "Ran BBB anomaly detection successfully; it returned zero current-week anomalies because current counts are below historical baselines, not because volume floors are too high.",
+    "Temporarily tested BBB anomaly detection with volume floors lowered by 50 percent and restored the original floors; detection still returned zero, confirming floors are not the cause.",
+    "Ran CFPB anomaly detection successfully; it completed without runtime errors and returned zero current-week anomalies.",
+    "Compiled all BBB, CFPB, and database Python modules successfully with python3 -m compileall."
+  ],
+  "overall_status": "PARTIALLY FIXED"
+}
