@@ -35,6 +35,14 @@ ARTICLE_SELECTORS = [
     "li.story-item",
 ]
 
+# These site-specific fallbacks are tried only after the requested selector order.
+FALLBACK_ARTICLE_SELECTORS = [
+    "li.story-card",
+    "div.headline-list-item",
+    "div.PagePromoB",
+    "div.PagePromo",
+]
+
 SCAM_KEYWORDS = [
     "scam",
     "fraud",
@@ -401,6 +409,7 @@ def _parse_date(value: str, today: date) -> date | None:
     normalized = normalized.replace("Sept.", "Sep.").replace("Sept ", "Sep ")
     date_patterns = [
         "%Y-%m-%d",
+        "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%dT%H:%M:%S%z",
         "%Y-%m-%dT%H:%M:%S.%f%z",
         "%Y-%m-%dT%H:%M:%SZ",
@@ -431,6 +440,22 @@ def _parse_date(value: str, today: date) -> date | None:
     if embedded:
         return _parse_date(embedded.group(0).replace(".", ""), today)
 
+    embedded_without_year = re.search(
+        r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|"
+        r"Dec(?:ember)?)\.?\s+\d{1,2}\b",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if embedded_without_year:
+        parsed = _parse_date(
+            f"{embedded_without_year.group(0).replace('.', '')}, {today.year}",
+            today,
+        )
+        if parsed and parsed > today + timedelta(days=30):
+            parsed = date(parsed.year - 1, parsed.month, parsed.day)
+        return parsed
+
     return None
 
 
@@ -444,6 +469,16 @@ def _published_date_from_article(article: Any, today: date) -> date:
         parsed = _parse_date(time_tag.get_text(" ", strip=True), today)
         if parsed:
             return parsed
+    date_like_elements = article.select(
+        "[class*='date' i], [class*='time' i], [class*='meta' i], [datetime]"
+    )
+    for element in date_like_elements:
+        parsed = _parse_date(element.get_text(" ", strip=True), today)
+        if parsed:
+            return parsed
+    parsed = _parse_date(article.get_text(" ", strip=True), today)
+    if parsed:
+        return parsed
     return today
 
 
@@ -469,6 +504,67 @@ def _sentiment_for(text: str) -> str:
     return "report"
 
 
+def _first_text_from_selectors(article_element: Any, selectors: list[str]) -> str:
+    for selector in selectors:
+        element = article_element.select_one(selector)
+        if element:
+            text = _clean_text(element.get_text(" ", strip=True))
+            if text:
+                return text
+    return ""
+
+
+def _headline_from_article(article_element: Any) -> str:
+    headline_tag = article_element.find(["h1", "h2", "h3"])
+    if headline_tag:
+        text = _clean_text(headline_tag.get_text(" ", strip=True))
+        if text:
+            return text
+
+    text = _first_text_from_selectors(
+        article_element,
+        [".headline", ".PagePromo-title", ".entry-title", "[data-testid*='headline' i]"],
+    )
+    if text:
+        return text
+
+    for link_tag in article_element.find_all("a", href=True):
+        text = _clean_text(link_tag.get_text(" ", strip=True))
+        if text and text.lower() not in {"share", "tweet", "email", "next"}:
+            return text
+        aria_label = _clean_text(str(link_tag.get("aria-label") or ""))
+        if aria_label:
+            return aria_label
+    return ""
+
+
+def _summary_from_article(article_element: Any) -> str:
+    summary_tag = article_element.find("p")
+    if summary_tag:
+        summary = _clean_text(summary_tag.get_text(" ", strip=True))
+        if summary:
+            return _truncate(summary, 400)
+
+    summary = _first_text_from_selectors(
+        article_element,
+        [".callout", ".PagePromo-description", ".PagePromo-excerpt", ".story-card__excerpt"],
+    )
+    if summary:
+        return _truncate(summary, 400)
+
+    for selector in ["[data-imgalt]", "img[alt]", "a[aria-label]"]:
+        element = article_element.select_one(selector)
+        if not element:
+            continue
+        attr_name = "data-imgalt" if element.has_attr("data-imgalt") else "alt"
+        if element.name == "a":
+            attr_name = "aria-label"
+        summary = _clean_text(str(element.get(attr_name) or ""))
+        if summary and summary.lower() not in {"share", "tweet", "email"}:
+            return _truncate(summary, 400)
+    return ""
+
+
 def _extract_article(
     article_element: Any,
     *,
@@ -477,18 +573,16 @@ def _extract_article(
     source_url: str,
     today: date,
 ) -> dict[str, Any] | None:
-    headline_tag = article_element.find(["h1", "h2", "h3"])
     link_tag = article_element.find("a", href=True)
-    if not headline_tag or not link_tag:
+    if not link_tag:
         return None
 
-    headline = _clean_text(headline_tag.get_text(" ", strip=True))
+    headline = _headline_from_article(article_element)
     href = str(link_tag.get("href", ""))
     if not headline or not href:
         return None
 
-    summary_tag = article_element.find("p")
-    summary = _truncate(summary_tag.get_text(" ", strip=True) if summary_tag else "", 400)
+    summary = _summary_from_article(article_element)
     published_at = _published_date_from_article(article_element, today)
 
     return {
@@ -542,6 +636,10 @@ def _filter_article(
 
 def _find_article_elements(soup: BeautifulSoup) -> list[Any]:
     for selector in ARTICLE_SELECTORS:
+        elements = soup.select(selector)
+        if elements:
+            return elements
+    for selector in FALLBACK_ARTICLE_SELECTORS:
         elements = soup.select(selector)
         if elements:
             return elements
