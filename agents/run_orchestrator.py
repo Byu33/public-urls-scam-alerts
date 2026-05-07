@@ -119,6 +119,7 @@ def run_step(script_path: str, action: Callable[[], Any]) -> dict[str, Any]:
     status = "PASS"
     error = ""
 
+    append_log(f"STEP START {script_path}")
     with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
         try:
             result = action()
@@ -126,6 +127,7 @@ def run_step(script_path: str, action: Callable[[], Any]) -> dict[str, Any]:
             status = "FAIL"
             error = traceback.format_exc()
             print(error, file=sys.stderr)
+    append_log(f"STEP COMPLETE {script_path} status={status}")
 
     return {
         "script": script_path,
@@ -170,10 +172,24 @@ def run_builder_phase() -> dict[str, Any]:
 
     def fetch_cfpb_wrapper() -> dict[str, Any]:
         nonlocal cfpb_trend_data
-        cfpb_trend_data = cfpb_fetch.fetch_cfpb_trends()
+        cfpb_fetch.REQUEST_DELAY_SECONDS = float(os.getenv("ORCHESTRATOR_CFPB_DELAY_SECONDS", "0.1"))
+        cfpb_fetch.REQUEST_TIMEOUT_SECONDS = int(os.getenv("ORCHESTRATOR_CFPB_TIMEOUT_SECONDS", "10"))
+        cfpb_fetch.MAX_RETRIES = int(os.getenv("ORCHESTRATOR_CFPB_MAX_RETRIES", "1"))
+        cfpb_fetch.RETRY_WAIT_SECONDS = int(os.getenv("ORCHESTRATOR_CFPB_RETRY_WAIT_SECONDS", "1"))
+        lookback_weeks = int(os.getenv("ORCHESTRATOR_CFPB_LOOKBACK_WEEKS", "2"))
+        raw_states = os.getenv("ORCHESTRATOR_CFPB_STATES", "CA")
+        states = None if raw_states.strip().upper() == "ALL" else [
+            state.strip().upper() for state in raw_states.split(",") if state.strip()
+        ]
+        cfpb_trend_data = cfpb_fetch.fetch_cfpb_trends(
+            lookback_weeks=lookback_weeks,
+            states=states,
+        )
         return {
             "trend_rows": len(cfpb_trend_data),
             "sample_rows": cfpb_trend_data[:3],
+            "lookback_weeks": lookback_weeks,
+            "states": states if states is not None else "ALL",
         }
 
     def build_cfpb_wrapper() -> dict[str, Any]:
