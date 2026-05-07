@@ -251,9 +251,9 @@ def step_purge_narratives() -> dict[str, Any]:
 # ── CFPB step functions ────────────────────────────────────────────────────────
 
 def step_cfpb_fetch_trends() -> dict[str, Any]:
-    # Only fetch last 2 weeks — historical baseline already in cfpb_trends.
-    # Weekly pipeline runs just need to add the current (and prior) week.
-    trend_data = cfpb_fetch_trends.fetch_cfpb_trends(lookback_weeks=2)
+    # CFPB anomaly detection needs a baseline; fetch_trends enforces a
+    # minimum 365-day lookback even if callers request less.
+    trend_data = cfpb_fetch_trends.fetch_cfpb_trends()
     print(f"STEP 9 result: cfpb_trend_data_points={len(trend_data)}")
     return {"trend_data": trend_data}
 

@@ -45,13 +45,13 @@ CFPB_CATEGORIES: list[dict[str, Any]] = [
         "scam_type": "Debit Card Fraud",
     },
     {
-        "product": "Credit card or prepaid card",
+        "product": "Credit card",
         "sub_products": ["General-purpose credit card or charge card"],
         "issue": "Problem with a purchase shown on your statement",
         "scam_type": "Credit Card Fraud",
     },
     {
-        "product": "Credit card or prepaid card",
+        "product": "Credit card",
         "sub_products": ["General-purpose credit card or charge card"],
         "issue": "Getting a credit card",
         "scam_type": "Identity Theft",
@@ -63,8 +63,8 @@ CFPB_CATEGORIES: list[dict[str, Any]] = [
         "scam_type": "Debt Collection Fraud",
     },
     {
-        "product": "Credit card or prepaid card",
-        "sub_products": ["General-purpose prepaid card", "Gift card"],
+        "product": "Prepaid card",
+        "sub_products": ["Gift card"],
         "issue": "Problem with a purchase or transfer",
         "scam_type": "Gift Card Scam",
     },
@@ -77,7 +77,7 @@ CFPB_CATEGORIES: list[dict[str, Any]] = [
 ]
 
 REQUEST_DELAY_SECONDS = 0.5
-REQUEST_TIMEOUT_SECONDS = 30
+REQUEST_TIMEOUT_SECONDS = 60
 MAX_RETRIES = 3
 RETRY_WAIT_SECONDS = 5
 
@@ -90,11 +90,10 @@ _HEADERS = {
     "Accept": "application/json",
 }
 
-# Page size for paginated record fetches
-PAGE_SIZE = 5000
-
-# Lookback used by fetch_trends (24 weeks for detection context)
-LOOKBACK_WEEKS = 24
+# Minimum lookback used by fetch_trends. The weekly orchestrator can pass a
+# smaller lookback, but anomaly detection needs a real baseline.
+MIN_LOOKBACK_DAYS = 365
+LOOKBACK_WEEKS = 52
 
 
 # ── HTTP helper ────────────────────────────────────────────────────────────────
@@ -144,6 +143,65 @@ def _extract_records(data: Any) -> list[dict[str, Any]]:
             if isinstance(inner, list):
                 return inner
     return []
+
+
+def _extract_aggregation_rows(
+    data: Any,
+    product: str,
+    sub_products: list[str],
+    issue: str,
+    scam_type: str,
+    state: str,
+) -> list[dict[str, Any]]:
+    """Best-effort parser for CFPB aggregation/trend-period response variants."""
+    if not isinstance(data, dict) or not (
+        "aggregations" in data or "trend_period" in data
+    ):
+        return []
+
+    rows: list[dict[str, Any]] = []
+
+    def visit(obj: Any) -> None:
+        if isinstance(obj, dict):
+            buckets = obj.get("buckets")
+            if isinstance(buckets, list):
+                for bucket in buckets:
+                    if not isinstance(bucket, dict):
+                        continue
+                    week_value = (
+                        bucket.get("key_as_string")
+                        or bucket.get("key")
+                        or bucket.get("trend_period")
+                    )
+                    count = bucket.get("doc_count") or bucket.get("count")
+                    if week_value is None or count is None:
+                        visit(bucket)
+                        continue
+                    try:
+                        week_date = date.fromisoformat(str(week_value)[:10])
+                        week_ending = (week_date + timedelta(days=(6 - week_date.weekday()) % 7)).isoformat()
+                        rows.append(
+                            {
+                                "week_ending": week_ending,
+                                "product": product,
+                                "sub_product": sub_products[0] if len(sub_products) == 1 else None,
+                                "issue": issue,
+                                "scam_type": scam_type,
+                                "state": state,
+                                "report_count": int(count),
+                            }
+                        )
+                    except (TypeError, ValueError):
+                        visit(bucket)
+            else:
+                for value in obj.values():
+                    visit(value)
+        elif isinstance(obj, list):
+            for value in obj:
+                visit(value)
+
+    visit(data.get("aggregations", data))
+    return rows
 
 
 def _aggregate_records_by_week(
@@ -207,52 +265,49 @@ def _fetch_category(
     state: str | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Fetch all complaint records for one category over the given date range,
+    Fetch complaint records for one category over the given date range,
     then aggregate into weekly row dicts.
 
-    The CFPB API returns raw records (not aggregation buckets), so we paginate
-    through all records using 'from' / 'size' and count by week ourselves.
+    The CFPB API currently returns a flat list of complaint records for this
+    endpoint, even when trend_by=week and no_aggs=false are supplied.
     """
     product = category["product"]
     issue = category["issue"]
     sub_products = category.get("sub_products", [])
 
-    all_records: list[dict[str, Any]] = []
-    offset = 0
+    params: dict[str, Any] = {
+        "trend_by": "week",
+        "product": product,
+        "issue": issue,
+        "date_received_min": date_min,
+        "date_received_max": date_max,
+        "date_range": "Custom",
+        "no_aggs": "false",
+        "format": "json",
+    }
 
-    while True:
-        params: dict[str, Any] = {
-            "product": product,
-            "issue": issue,
-            "date_received_min": date_min,
-            "date_received_max": date_max,
-            "no_aggs": "true",
-            "format": "json",
-            "size": PAGE_SIZE,
-            "from": offset,
-        }
+    if len(sub_products) == 1:
+        params["sub_product"] = sub_products[0]
 
-        if len(sub_products) == 1:
-            params["sub_product"] = sub_products[0]
+    if state is not None:
+        params["state"] = state
 
-        if state is not None:
-            params["state"] = state
+    data = _get_with_retry(params)
+    aggregation_rows = _extract_aggregation_rows(
+        data,
+        product=product,
+        sub_products=sub_products,
+        issue=issue,
+        scam_type=category["scam_type"],
+        state=state if state is not None else "NATIONAL",
+    )
+    if aggregation_rows:
+        return aggregation_rows
 
-        data = _get_with_retry(params)
-        if data is None:
-            break
-
-        page = _extract_records(data)
-        all_records.extend(page)
-
-        if len(page) < PAGE_SIZE:
-            break
-
-        offset += PAGE_SIZE
-        time.sleep(REQUEST_DELAY_SECONDS)
+    records = _extract_records(data) if data is not None else []
 
     return _aggregate_records_by_week(
-        records=all_records,
+        records=records,
         product=product,
         sub_products=sub_products,
         issue=issue,
@@ -279,8 +334,9 @@ def fetch_cfpb_trends(
         states = ALL_STATES
 
     today = date.today()
-    date_min = (today - timedelta(weeks=lookback_weeks)).isoformat()
-    date_max = today.isoformat()
+    lookback_days = max(lookback_weeks * 7, MIN_LOOKBACK_DAYS)
+    date_min = (today - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    date_max = today.strftime("%Y-%m-%d")
 
     all_rows: list[dict[str, Any]] = []
     total_calls = 0

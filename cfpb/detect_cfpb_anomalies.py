@@ -22,7 +22,7 @@ from detect_anomalies import STATE_TIERS  # noqa: E402
 
 # ── Configuration ──────────────────────────────────────────────────────────────
 
-LOOKBACK_WEEKS = 24
+LOOKBACK_WEEKS = 52
 SHORT_WINDOW = 8
 LONG_WINDOW = 16
 DEVIATION_THRESHOLD = 1.2
@@ -33,6 +33,14 @@ NATIONAL_LONG_WINDOW = 16
 
 DEFAULT_STATE_TIER = 4
 MIN_FLOOR = 8
+
+# Set USE_INITIAL_FLOORS = False after 16 weeks of data are collected.
+USE_INITIAL_FLOORS = True
+
+# TEMPORARY: lowered from 8 to 4 while building up historical baseline.
+# Raise back to 8 after 8 weeks of weekly runs.
+INITIAL_DATA_SUFFICIENCY_WEEKS = 4
+STANDARD_DATA_SUFFICIENCY_WEEKS = 8
 
 CFPB_NATIONAL_FLOORS: dict[str, int] = {
     "Payment Fraud":          200,
@@ -46,6 +54,34 @@ CFPB_NATIONAL_FLOORS: dict[str, int] = {
     "default":                 75,
 }
 
+CFPB_NATIONAL_FLOORS_INITIAL: dict[str, int] = {
+    "Government Impersonation Debt Collection": 8,
+    "Illegal Debt Collection Threats": 10,
+    "Phantom Debt Identity Theft": 38,
+    "Credit Card Identity Theft": 20,
+    "Unauthorized Card Charges": 15,
+    "Account Takeover Unauthorized Charges": 25,
+    "Fraudulent Account Opening": 8,
+    "Explicit Fraud or Scam": 30,
+    "Predatory Service Advance Fee": 5,
+    "Predatory Upfront Fee Scam": 5,
+    "Fraudulent Loan": 8,
+    "Student Loan Relief Scam": 5,
+    "Payment Transfer Fraud": 38,
+    "Prepaid Card Purchase Fraud": 8,
+    "Digital Wallet Account Takeover": 12,
+    "Unauthorized Loan Identity Theft": 5,
+    "Payment Fraud":          100,
+    "Account Takeover":        75,
+    "Debit Card Fraud":        50,
+    "Credit Card Fraud":       88,
+    "Identity Theft":          63,
+    "Debt Collection Fraud":   40,
+    "Gift Card Scam":          20,
+    "Predatory Service Scam":  15,
+    "default":                 12,
+}
+
 # Six-tier state floors keyed by scam_type, values are [T1, T2, T3, T4, T5, T6]
 CFPB_STATE_FLOORS: dict[str, list[int]] = {
     "Payment Fraud":          [40, 20, 10, 8, 8, 8],
@@ -57,6 +93,33 @@ CFPB_STATE_FLOORS: dict[str, list[int]] = {
     "Gift Card Scam":         [10,  8,  8, 8, 8, 8],
     "Predatory Service Scam": [ 8,  8,  8, 8, 8, 8],
     "default":                [15,  8,  8, 8, 8, 8],
+}
+
+CFPB_STATE_FLOORS_INITIAL: dict[str, list[int]] = {
+    key: [3, 3, 3, 3, 3, 3] for key in CFPB_STATE_FLOORS
+}
+
+SCAM_TYPE_BY_PRODUCT_ISSUE: dict[tuple[str, str], str] = {
+    (
+        "Money transfer, virtual currency, or money service",
+        "Fraud or scam",
+    ): "Payment Fraud",
+    (
+        "Checking or savings account",
+        "Problem with a lender or other company charging your account",
+    ): "Account Takeover",
+    ("Checking or savings account", "Managing an account"): "Debit Card Fraud",
+    (
+        "Credit card",
+        "Problem with a purchase shown on your statement",
+    ): "Credit Card Fraud",
+    ("Credit card", "Getting a credit card"): "Identity Theft",
+    ("Debt collection", "False statements or representation"): "Debt Collection Fraud",
+    ("Prepaid card", "Problem with a purchase or transfer"): "Gift Card Scam",
+    (
+        "Debt or credit management",
+        "Didn't provide services promised",
+    ): "Predatory Service Scam",
 }
 
 TIER_ORDER = {"CRITICAL": 0, "ALERT": 1, "WATCH": 2}
@@ -126,15 +189,27 @@ def _get_state_tier(state: Any) -> int:
     return STATE_TIERS.get(code, DEFAULT_STATE_TIER)
 
 
+def _data_sufficiency_weeks() -> int:
+    return INITIAL_DATA_SUFFICIENCY_WEEKS if USE_INITIAL_FLOORS else STANDARD_DATA_SUFFICIENCY_WEEKS
+
+
+def _scam_type_for(product: Any, issue: Any) -> str:
+    key = (str(product), str(issue))
+    return SCAM_TYPE_BY_PRODUCT_ISSUE.get(key, str(issue))
+
+
 def _get_state_floor(scam_type: str, state: Any) -> int:
     tier = _get_state_tier(state)
-    floors = CFPB_STATE_FLOORS.get(scam_type, CFPB_STATE_FLOORS["default"])
-    value = floors[tier - 1] if 1 <= tier <= 6 else CFPB_STATE_FLOORS["default"][DEFAULT_STATE_TIER - 1]
-    return max(int(value), MIN_FLOOR)
+    floor_table = CFPB_STATE_FLOORS_INITIAL if USE_INITIAL_FLOORS else CFPB_STATE_FLOORS
+    min_floor = 3 if USE_INITIAL_FLOORS else MIN_FLOOR
+    floors = floor_table.get(scam_type, floor_table["default"])
+    value = floors[tier - 1] if 1 <= tier <= 6 else floor_table["default"][DEFAULT_STATE_TIER - 1]
+    return max(int(value), min_floor)
 
 
 def _get_national_floor(scam_type: str) -> int:
-    return CFPB_NATIONAL_FLOORS.get(scam_type, CFPB_NATIONAL_FLOORS["default"])
+    floor_table = CFPB_NATIONAL_FLOORS_INITIAL if USE_INITIAL_FLOORS else CFPB_NATIONAL_FLOORS
+    return floor_table.get(scam_type, floor_table["default"])
 
 
 # ── Statistical helpers ────────────────────────────────────────────────────────
@@ -164,6 +239,80 @@ def _elevate_tier(tier: str) -> str:
 def _trace(enabled: bool, label: str, msg: str) -> None:
     if enabled:
         print(f"  {label}  {msg}")
+
+
+def _new_filter_counts() -> dict[str, int]:
+    return {
+        "combinations_tried": 0,
+        "no_current": 0,
+        "failed_filter_1": 0,
+        "failed_filter_2": 0,
+        "failed_filter_3": 0,
+        "failed_filter_4": 0,
+        "passed_all_filters": 0,
+    }
+
+
+def _print_filter_diagnostics(
+    label: str,
+    counts: dict[str, int],
+    top_rows: list[dict[str, Any]],
+) -> None:
+    print(f"\n{label} filter diagnostics")
+    print(f"Combinations tried: {counts['combinations_tried']}")
+    print(f"No current-week data: {counts['no_current']}")
+    print(f"Failed Filter 1 (data sufficiency): {counts['failed_filter_1']}")
+    print(f"Failed Filter 2 (threshold): {counts['failed_filter_2']}")
+    print(f"Failed Filter 3 (volume floor): {counts['failed_filter_3']}")
+    print(f"Failed Filter 4 (consecutive weeks): {counts['failed_filter_4']}")
+    print(f"Passed all filters (alerts): {counts['passed_all_filters']}")
+    print("Top 5 combinations by volume regardless of filters:")
+    if not top_rows:
+        print("  (none)")
+        return
+    for combo in sorted(top_rows, key=lambda r: r["current_count"], reverse=True)[:5]:
+        print(f"  {combo['scam_type']} {combo['state']}")
+        print(f"  current_count={combo['current_count']}")
+        print(f"  weeks_of_data={combo['weeks']}")
+        print(f"  short_dev={combo['short_dev']}")
+        print(f"  long_dev={combo['long_dev']}")
+        print(f"  floor={combo['floor']}")
+        print(f"  rejected_at_filter={combo['rejected_at']}")
+
+
+def _diagnostic_row(
+    *,
+    product: Any,
+    issue: Any,
+    state: Any,
+    current_count: float,
+    weeks: int,
+    historical: pd.DataFrame,
+    floor: int,
+    rejected_at: str,
+) -> dict[str, Any]:
+    short_hist = historical.tail(SHORT_WINDOW)
+    long_hist = historical.tail(LONG_WINDOW)
+    short_dev = _safe_zscore(
+        current_count,
+        short_hist["report_count"].mean(),
+        short_hist["report_count"].std(ddof=1),
+    ) if not short_hist.empty else 0.0
+    long_dev = _safe_zscore(
+        current_count,
+        long_hist["report_count"].mean(),
+        long_hist["report_count"].std(ddof=1),
+    ) if not long_hist.empty else 0.0
+    return {
+        "scam_type": _scam_type_for(product, issue),
+        "state": state or "NATIONAL",
+        "current_count": int(current_count),
+        "weeks": weeks,
+        "short_dev": round(short_dev, 3),
+        "long_dev": round(long_dev, 3),
+        "floor": floor,
+        "rejected_at": rejected_at,
+    }
 
 
 # ── National aggregate ─────────────────────────────────────────────────────────
@@ -200,13 +349,13 @@ def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[st
 
     current_week = df["week_ending"].max()
     candidates: list[dict[str, Any]] = []
-    trace_counts: dict[str, int] = {
-        "no_current": 0, "f1": 0, "f2": 0, "f3": 0, "f4": 0, "survived": 0,
-    }
+    trace_counts = _new_filter_counts()
+    top_rows: list[dict[str, Any]] = []
 
     for (product, issue, state), group in state_df.groupby(
         ["product", "issue", "state"], dropna=False
     ):
+        trace_counts["combinations_tried"] += 1
         combo = f"{product} / {issue} / {state}"
         group = group.sort_values("week_ending").reset_index(drop=True)
 
@@ -217,18 +366,32 @@ def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[st
             continue
 
         current_count = float(current_rows.iloc[0]["report_count"])
-        floor = _get_state_floor(str(issue), state)
+        scam_type = _scam_type_for(product, issue)
+        floor = _get_state_floor(scam_type, state)
         state_tier = _get_state_tier(state)
         _trace(trace, "[TIER  ]", f"{combo}  →  tier={state_tier}  floor={floor}")
 
         historical = group[group["week_ending"] < current_week].sort_values("week_ending")
+        diagnostic = _diagnostic_row(
+            product=product,
+            issue=issue,
+            state=state,
+            current_count=current_count,
+            weeks=len(group),
+            historical=historical,
+            floor=floor,
+            rejected_at="passed",
+        )
 
-        # Filter 1: data sufficiency — need LONG_WINDOW historical rows
-        if len(historical) < LONG_WINDOW:
-            trace_counts["f1"] += 1
+        # Filter 1: data sufficiency
+        min_weeks = _data_sufficiency_weeks()
+        if len(historical) < min_weeks:
+            trace_counts["failed_filter_1"] += 1
+            diagnostic["rejected_at"] = "filter_1_data_sufficiency"
+            top_rows.append(diagnostic)
             _trace(
                 trace, "[F1 DROP]",
-                f"{combo}  →  only {len(historical)} historical weeks (need {LONG_WINDOW})"
+                f"{combo}  →  only {len(historical)} historical weeks (need {min_weeks})"
             )
             continue
 
@@ -243,9 +406,13 @@ def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[st
 
         short_dev = _safe_zscore(current_count, short_mean, short_std)
         long_dev = _safe_zscore(current_count, long_mean, long_std)
+        diagnostic["short_dev"] = round(short_dev, 3)
+        diagnostic["long_dev"] = round(long_dev, 3)
 
         if short_dev < DEVIATION_THRESHOLD and long_dev < DEVIATION_THRESHOLD:
-            trace_counts["f2"] += 1
+            trace_counts["failed_filter_2"] += 1
+            diagnostic["rejected_at"] = "filter_2_threshold"
+            top_rows.append(diagnostic)
             _trace(
                 trace, "[F2 DROP]",
                 f"{combo}  →  short={short_dev:+.3f}  long={long_dev:+.3f}"
@@ -255,7 +422,9 @@ def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[st
 
         # Filter 3: volume floor
         if current_count < floor:
-            trace_counts["f3"] += 1
+            trace_counts["failed_filter_3"] += 1
+            diagnostic["rejected_at"] = "filter_3_volume_floor"
+            top_rows.append(diagnostic)
             _trace(
                 trace, "[F3 DROP]",
                 f"{combo}  →  count={int(current_count)} < floor={floor}"
@@ -266,7 +435,9 @@ def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[st
         prev_row = historical.tail(1)
         prev_count = float(prev_row.iloc[0]["report_count"]) if not prev_row.empty else 0.0
         if prev_row.empty or prev_count < floor:
-            trace_counts["f4"] += 1
+            trace_counts["failed_filter_4"] += 1
+            diagnostic["rejected_at"] = "filter_4_consecutive_weeks"
+            top_rows.append(diagnostic)
             _trace(
                 trace, "[F4 DROP]",
                 f"{combo}  →  prev_count={int(prev_count)} < floor={floor}  (single-week spike)"
@@ -276,7 +447,8 @@ def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[st
         # No Filter 5 (dollar trajectory) — CFPB trends have no dollar data
 
         tier = _base_tier(short_dev, long_dev)
-        trace_counts["survived"] += 1
+        trace_counts["passed_all_filters"] += 1
+        top_rows.append(diagnostic)
         _trace(
             trace, "[PASS  ]",
             f"{combo}  →  count={int(current_count)}  short={short_dev:+.3f}"
@@ -288,6 +460,7 @@ def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[st
                 "product": product,
                 "issue": issue,
                 "state": state,
+                "scam_type": scam_type,
                 "short_deviation": round(short_dev, 3),
                 "long_deviation": round(long_dev, 3),
                 "current_count": int(current_count),
@@ -300,14 +473,7 @@ def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[st
         )
 
     if trace:
-        total = sum(trace_counts.values())
-        print(
-            f"\n  CFPB state filter summary: total={total}"
-            f"  no_current={trace_counts['no_current']}"
-            f"  F1={trace_counts['f1']}  F2={trace_counts['f2']}"
-            f"  F3={trace_counts['f3']}  F4={trace_counts['f4']}"
-            f"  survived={trace_counts['survived']}\n"
-        )
+        _print_filter_diagnostics("CFPB state", trace_counts, top_rows)
 
     if not candidates:
         return []
@@ -353,11 +519,11 @@ def detect_cfpb_anomalies_national(df: pd.DataFrame, trace: bool = False) -> lis
 
     current_week = national_df["week_ending"].max()
     candidates: list[dict[str, Any]] = []
-    trace_counts: dict[str, int] = {
-        "no_current": 0, "f1": 0, "f2": 0, "f3": 0, "f4": 0, "survived": 0,
-    }
+    trace_counts = _new_filter_counts()
+    top_rows: list[dict[str, Any]] = []
 
     for (product, issue), group in national_df.groupby(["product", "issue"], dropna=False):
+        trace_counts["combinations_tried"] += 1
         label = f"NATIONAL / {product} / {issue}"
         group = group.sort_values("week_ending").reset_index(drop=True)
 
@@ -369,13 +535,28 @@ def detect_cfpb_anomalies_national(df: pd.DataFrame, trace: bool = False) -> lis
 
         current_count = float(current_rows.iloc[0]["report_count"])
         historical = group[group["week_ending"] < current_week].sort_values("week_ending")
+        scam_type = _scam_type_for(product, issue)
+        floor = _get_national_floor(scam_type)
+        diagnostic = _diagnostic_row(
+            product=product,
+            issue=issue,
+            state=None,
+            current_count=current_count,
+            weeks=len(group),
+            historical=historical,
+            floor=floor,
+            rejected_at="passed",
+        )
 
         # Filter 1
-        if len(historical) < NATIONAL_LONG_WINDOW:
-            trace_counts["f1"] += 1
+        min_weeks = _data_sufficiency_weeks()
+        if len(historical) < min_weeks:
+            trace_counts["failed_filter_1"] += 1
+            diagnostic["rejected_at"] = "filter_1_data_sufficiency"
+            top_rows.append(diagnostic)
             _trace(
                 trace, "[NAT-F1 DROP]",
-                f"{label}  →  only {len(historical)} historical weeks (need {NATIONAL_LONG_WINDOW})"
+                f"{label}  →  only {len(historical)} historical weeks (need {min_weeks})"
             )
             continue
 
@@ -389,8 +570,9 @@ def detect_cfpb_anomalies_national(df: pd.DataFrame, trace: bool = False) -> lis
 
         short_dev = _safe_zscore(current_count, short_mean, short_std)
         long_dev = _safe_zscore(current_count, long_mean, long_std)
+        diagnostic["short_dev"] = round(short_dev, 3)
+        diagnostic["long_dev"] = round(long_dev, 3)
 
-        floor = _get_national_floor(str(issue))
         prev_row = historical.tail(1)
         prev_count = float(prev_row.iloc[0]["report_count"]) if not prev_row.empty else 0.0
 
@@ -403,24 +585,31 @@ def detect_cfpb_anomalies_national(df: pd.DataFrame, trace: bool = False) -> lis
 
         # Filter 2
         if short_dev < DEVIATION_THRESHOLD and long_dev < DEVIATION_THRESHOLD:
-            trace_counts["f2"] += 1
+            trace_counts["failed_filter_2"] += 1
+            diagnostic["rejected_at"] = "filter_2_threshold"
+            top_rows.append(diagnostic)
             _trace(trace, "[NAT-F2 DROP]", f"{label}  →  both below {DEVIATION_THRESHOLD}")
             continue
 
         # Filter 3
         if current_count < floor:
-            trace_counts["f3"] += 1
+            trace_counts["failed_filter_3"] += 1
+            diagnostic["rejected_at"] = "filter_3_volume_floor"
+            top_rows.append(diagnostic)
             _trace(trace, "[NAT-F3 DROP]", f"{label}  →  count={int(current_count)} < floor={floor}")
             continue
 
         # Filter 4
         if prev_row.empty or prev_count < floor:
-            trace_counts["f4"] += 1
+            trace_counts["failed_filter_4"] += 1
+            diagnostic["rejected_at"] = "filter_4_consecutive_weeks"
+            top_rows.append(diagnostic)
             _trace(trace, "[NAT-F4 DROP]", f"{label}  →  prev={int(prev_count)} < floor={floor}")
             continue
 
         tier = _base_tier(short_dev, long_dev)
-        trace_counts["survived"] += 1
+        trace_counts["passed_all_filters"] += 1
+        top_rows.append(diagnostic)
         _trace(
             trace, "[NAT-PASS]",
             f"{label}  →  count={int(current_count)}  short={short_dev:+.3f}"
@@ -432,6 +621,7 @@ def detect_cfpb_anomalies_national(df: pd.DataFrame, trace: bool = False) -> lis
                 "product": product,
                 "issue": issue,
                 "state": None,
+                "scam_type": scam_type,
                 "short_deviation": round(short_dev, 3),
                 "long_deviation": round(long_dev, 3),
                 "current_count": int(current_count),
@@ -444,14 +634,7 @@ def detect_cfpb_anomalies_national(df: pd.DataFrame, trace: bool = False) -> lis
         )
 
     if trace:
-        total = sum(trace_counts.values())
-        print(
-            f"\n  CFPB national filter summary: total={total}"
-            f"  no_current={trace_counts['no_current']}"
-            f"  F1={trace_counts['f1']}  F2={trace_counts['f2']}"
-            f"  F3={trace_counts['f3']}  F4={trace_counts['f4']}"
-            f"  survived={trace_counts['survived']}\n"
-        )
+        _print_filter_diagnostics("CFPB national", trace_counts, top_rows)
 
     candidates.sort(key=lambda r: (TIER_ORDER.get(r["alert_tier"], 99), -r["short_deviation"]))
     return candidates
