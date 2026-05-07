@@ -462,11 +462,13 @@ def _parse_date(value: str, today: date) -> date | None:
 def _published_date_from_article(article: Any, today: date) -> date:
     time_tag = article.find("time")
     if time_tag:
-        datetime_attr = time_tag.get("datetime")
-        parsed = _parse_date(str(datetime_attr or ""), today)
+        # Some local sites reuse card datetime attributes for refresh timestamps;
+        # visible time text is the safer publication date when both are present.
+        parsed = _parse_date(time_tag.get_text(" ", strip=True), today)
         if parsed:
             return parsed
-        parsed = _parse_date(time_tag.get_text(" ", strip=True), today)
+        datetime_attr = time_tag.get("datetime")
+        parsed = _parse_date(str(datetime_attr or ""), today)
         if parsed:
             return parsed
     date_like_elements = article.select(
