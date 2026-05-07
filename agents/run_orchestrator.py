@@ -4,8 +4,8 @@ import contextlib
 import importlib.util
 import io
 import json
+import multiprocessing as mp
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -162,18 +162,53 @@ def get_supabase_client() -> Client:
     return create_client(url, key)
 
 
-@contextlib.contextmanager
-def time_limit(seconds: int, label: str) -> Any:
-    def _handle_timeout(_signum: int, _frame: Any) -> None:
+def run_child_action(action: Callable[[], Any], seconds: int, label: str) -> Any:
+    ctx = mp.get_context("fork")
+    queue: Any = ctx.Queue()
+
+    def _target() -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                child_result = action()
+                queue.put(
+                    {
+                        "status": "PASS",
+                        "result": child_result,
+                        "output": stdout.getvalue(),
+                        "errors": stderr.getvalue(),
+                    }
+                )
+            except Exception:
+                queue.put(
+                    {
+                        "status": "FAIL",
+                        "result": None,
+                        "output": stdout.getvalue(),
+                        "errors": stderr.getvalue() + traceback.format_exc(),
+                    }
+                )
+
+    process = ctx.Process(target=_target)
+    process.start()
+    process.join(seconds)
+    if process.is_alive():
+        process.terminate()
+        process.join(5)
         raise TimeoutError(f"{label} exceeded {seconds}s")
 
-    previous = signal.signal(signal.SIGALRM, _handle_timeout)
-    signal.alarm(seconds)
-    try:
-        yield
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, previous)
+    if queue.empty():
+        raise RuntimeError(f"{label} exited without returning a result")
+
+    payload = queue.get()
+    if payload.get("output"):
+        print(payload["output"], end="")
+    if payload.get("errors"):
+        print(payload["errors"], end="", file=sys.stderr)
+    if payload.get("status") != "PASS":
+        raise RuntimeError(f"{label} failed in child process")
+    return payload.get("result")
 
 
 def run_builder_phase() -> dict[str, Any]:
@@ -192,8 +227,11 @@ def run_builder_phase() -> dict[str, Any]:
         bbb_fetch.PAGE_DELAY_SECONDS = float(os.getenv("ORCHESTRATOR_BBB_PAGE_DELAY_SECONDS", "0.1"))
         total_timeout = int(os.getenv("ORCHESTRATOR_BBB_FETCH_TOTAL_TIMEOUT_SECONDS", "90"))
         try:
-            with time_limit(total_timeout, "bbb/fetch_reports.py"):
-                return bbb_fetch.run_fetch_pipeline()
+            return run_child_action(
+                bbb_fetch.run_fetch_pipeline,
+                total_timeout,
+                "bbb/fetch_reports.py",
+            )
         except TimeoutError as exc:
             warning = (
                 f"{exc}; continuing with existing Supabase bbb_scam_reports data "
@@ -222,11 +260,14 @@ def run_builder_phase() -> dict[str, Any]:
         ]
         total_timeout = int(os.getenv("ORCHESTRATOR_CFPB_FETCH_TOTAL_TIMEOUT_SECONDS", "120"))
         try:
-            with time_limit(total_timeout, "cfpb/fetch_trends.py"):
-                cfpb_trend_data = cfpb_fetch.fetch_cfpb_trends(
+            cfpb_trend_data = run_child_action(
+                lambda: cfpb_fetch.fetch_cfpb_trends(
                     lookback_weeks=lookback_weeks,
                     states=states,
-                )
+                ),
+                total_timeout,
+                "cfpb/fetch_trends.py",
+            )
         except TimeoutError as exc:
             cfpb_trend_data = []
             print(f"WARNING: {exc}; continuing with existing Supabase cfpb_trends data.")
