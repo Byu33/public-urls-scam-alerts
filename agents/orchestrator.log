@@ -1,69 +1,8 @@
-START 2026-05-07T08:28:51.955228+00:00
+START 2026-05-07T08:45:53.120085+00:00
 retry_count=0
 max_retries=3
-2026-05-07T08:28:52.158776+00:00 STEP START bbb/fetch_reports.py
-2026-05-07T08:29:22.198431+00:00 STEP COMPLETE bbb/fetch_reports.py status=PASS
-2026-05-07T08:29:22.198533+00:00 STEP START cfpb/fetch_trends.py
-2026-05-07T08:29:24.525004+00:00 STEP COMPLETE cfpb/fetch_trends.py status=PASS
-2026-05-07T08:29:24.525083+00:00 STEP START local/fetch_local_crime.py
-2026-05-07T08:29:24.525674+00:00 STEP COMPLETE local/fetch_local_crime.py status=PASS
-2026-05-07T08:29:24.525703+00:00 STEP START bbb/build_trends.py
-2026-05-07T08:29:33.599961+00:00 STEP COMPLETE bbb/build_trends.py status=PASS
-2026-05-07T08:29:33.600025+00:00 STEP START cfpb/build_cfpb_trends.py
-2026-05-07T08:29:33.773052+00:00 STEP COMPLETE cfpb/build_cfpb_trends.py status=PASS
-2026-05-07T08:29:33.773339+00:00 BUILDER COMPLETE
-2026-05-07T08:29:33.773366+00:00 STEP START bbb/detect_anomalies.py
-2026-05-07T08:29:35.888999+00:00 STEP COMPLETE bbb/detect_anomalies.py status=PASS
-2026-05-07T08:29:35.889052+00:00 STEP START cfpb/detect_cfpb_anomalies.py
-2026-05-07T08:29:36.481537+00:00 STEP COMPLETE cfpb/detect_cfpb_anomalies.py status=PASS
-2026-05-07T08:29:37.332740+00:00 VERIFIER COMPLETE
-2026-05-07T08:29:37.688734+00:00 QUALITY COMPLETE
-2026-05-07T08:29:37.688803+00:00 QUALITY HOLD rerun once
-2026-05-07T08:29:37.688815+00:00 FIXER START target=quality
-2026-05-07T08:29:37.688880+00:00 FIXER ISSUE target=quality Invalid state codes in bbb_scam_reports: AB, BC
-2026-05-07T08:29:37.688892+00:00 FIXER COMPLETE target=quality
-2026-05-07T08:29:38.029046+00:00 QUALITY COMPLETE
-2026-05-07T08:29:38.029130+00:00 QUALITY HOLD continuing with warnings noted
-2026-05-07T08:29:38.029427+00:00 STEP START output/write_to_excel.py
-2026-05-07T08:29:38.089562+00:00 STEP COMPLETE output/write_to_excel.py status=PASS
-2026-05-07T08:29:38.090016+00:00 OUTPUT COMPLETE
-2026-05-07T08:29:38.090242+00:00 FINAL SUMMARY
-2026-05-07T08:29:38.090254+00:00 ══════════════════════════════════════════
-SCAM INTELLIGENCE PIPELINE - FINAL REPORT
-2026-05-07T08:29:38.090213+00:00
-══════════════════════════════════════════
-
-PHASE RESULTS:
-  Builder:     PASS
-  Verifier:    PASS
-  Data Quality: HOLD
-  Output:      PASS
-
-DATA SUMMARY:
-  BBB records ingested:    16818
-  CFPB records ingested:   24
-  Local crime records:     1
-  BBB anomalies detected:  {'CRITICAL': 0, 'ALERT': 0, 'WATCH': 0}
-  CFPB anomalies detected: {'CRITICAL': 0, 'ALERT': 0, 'WATCH': 0}
-  Cross source signals:    0
-
-FILES READY FOR COPILOT CHAT UPLOAD:
-  sharepoint_output/Weekly_Briefing.md
-  sharepoint_output/Scam_Intelligence_Briefing.xlsx
-  sharepoint_output/BBB_Anomalies.csv
-  sharepoint_output/CFPB_Anomalies.csv
-  sharepoint_output/Cross_Source_Signals.csv
-  sharepoint_output/Supabase_Table_Counts.csv
-  sharepoint_output/Pipeline_Phase_Status.csv
-  sharepoint_output/Local_Crime_LA.csv
-  sharepoint_output/Local_Crime_LA.json
-
-TOTAL PIPELINE TIME: 0 minutes 46 seconds
-
-STATUS: NEEDS ATTENTION
-══════════════════════════════════════════
-NEEDS ATTENTION:
-- bbb/fetch_reports.py exceeded 30s; continuing with existing Supabase bbb_scam_reports data for downstream trend generation.
-- No live local crime source exists in this repository; generated configured placeholder output.
-- Supabase MCP server requires authentication, so table counts were queried through the repo Supabase client.
-- Invalid state codes in bbb_scam_reports: AB, BC
+2026-05-07T08:45:53.120208+00:00 STEP START bbb/detect_anomalies.py
+2026-05-07T08:45:55.610454+00:00 STEP COMPLETE bbb/detect_anomalies.py status=PASS
+2026-05-07T08:45:55.610508+00:00 STEP START cfpb/detect_cfpb_anomalies.py
+2026-05-07T08:45:56.965235+00:00 STEP COMPLETE cfpb/detect_cfpb_anomalies.py status=PASS
+2026-05-07T08:45:58.137959+00:00 VERIFIER COMPLETE
