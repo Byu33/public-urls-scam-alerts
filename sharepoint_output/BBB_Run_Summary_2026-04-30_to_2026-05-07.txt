@@ -1,0 +1,19 @@
+BBB PIPELINE RUN SUMMARY
+========================
+Generated UTC: 2026-05-07T15:02:54.490517+00:00
+Requested BBB-only week: 2026-04-30 to 2026-05-07
+Completed steps:
+- Refreshed BBB Scam Tracker reports for the requested range via bbb/fetch_reports.py.
+- Rebuilt BBB trends via bbb/build_trends.py.
+- Ran custom BBB-only detection with the requested range aggregated as one normal week ending 2026-05-07.
+- Wrote alert and required narrative text files.
+
+Distinct current-week reports: 3012
+Available current-week narratives: 3012
+Detected BBB alerts: 0
+Critical=0 Alert=0 Watch=0
+
+Output files:
+- sharepoint_output/BBB_Alerts_2026-04-30_to_2026-05-07.txt
+- sharepoint_output/BBB_Alert_Narratives_2026-04-30_to_2026-05-07.txt
+- sharepoint_output/BBB_Run_Summary_2026-04-30_to_2026-05-07.txt

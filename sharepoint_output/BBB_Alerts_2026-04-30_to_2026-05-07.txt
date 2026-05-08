@@ -1,0 +1,62 @@
+BBB ALERTS
+==========
+Generated UTC: 2026-05-07T15:02:54.490175+00:00
+Requested week: 2026-04-30 to 2026-05-07
+Custom treatment: all reports from 2026-04-30 through 2026-05-07 were aggregated into one normal BBB week ending 2026-05-07.
+Pipeline scope: BBB only; CFPB steps were not run for this output.
+Source rows pulled from Supabase: 17090
+Distinct BBB report ids used: 17090
+Current-week distinct BBB reports: 3012
+Current-week available narratives: 3012
+
+Current-week reports by date:
+- 2026-04-30: 930
+- 2026-05-01: 698
+- 2026-05-02: 198
+- 2026-05-03: 296
+- 2026-05-04: 506
+- 2026-05-05: 111
+- 2026-05-06: 237
+- 2026-05-07: 36
+
+Custom trend buckets used for detection:
+- 2026-03-11: 1326 reports
+- 2026-03-18: 3518 reports
+- 2026-03-25: 4382 reports
+- 2026-04-01: 655 reports
+- 2026-04-08: 4079 reports
+- 2026-04-15: 118 reports
+- 2026-05-07: 3012 reports
+
+Alert counts:
+- CRITICAL: 0
+- ALERT: 0
+- WATCH: 0
+- TOTAL: 0
+
+Alert details:
+- No BBB anomalies met the detector thresholds for the requested normal-week bucket.
+
+Top current-week scam types:
+- Online Purchase: 1300
+- Phishing: 535
+- Other: 211
+- Employment: 194
+- Debt Collections: 143
+- Counterfeit Product: 122
+- Advance Fee Loan: 67
+- Sweepstakes/Lottery/Prizes: 51
+- Fake Invoice/Supplier Bill: 41
+- Government Agency Imposter: 40
+
+Top current-week states:
+- CA: 270
+- TX: 252
+- FL: 239
+- GA: 149
+- OH: 136
+- PA: 134
+- NY: 127
+- VA: 122
+- NC: 90
+- WA: 82

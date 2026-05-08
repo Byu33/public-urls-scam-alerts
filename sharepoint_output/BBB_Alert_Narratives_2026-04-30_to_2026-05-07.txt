@@ -1,0 +1,7 @@
+BBB ALERT NARRATIVES
+====================
+Generated UTC: 2026-05-07T15:02:54.490435+00:00
+Requested week: 2026-04-30 to 2026-05-07
+Narrative selection rule: include only narratives required by detected BBB alerts for this custom week bucket.
+
+No alert narratives are required because no BBB alerts were detected for this run.
