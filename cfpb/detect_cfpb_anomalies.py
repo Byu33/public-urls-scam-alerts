@@ -23,40 +23,43 @@ from detect_anomalies import STATE_TIERS  # noqa: E402
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 LOOKBACK_WEEKS = 24
-SHORT_WINDOW = 8
-LONG_WINDOW = 16
-DEVIATION_THRESHOLD = 1.2
+SHORT_WINDOW = 4
+LONG_WINDOW = 8
+DEVIATION_THRESHOLD = 1.0
 HIGH_DEVIATION = 2.0
 
-NATIONAL_SHORT_WINDOW = 8
-NATIONAL_LONG_WINDOW = 16
+NATIONAL_SHORT_WINDOW = 4
+NATIONAL_LONG_WINDOW = 8
 
 DEFAULT_STATE_TIER = 4
-MIN_FLOOR = 8
+MIN_FLOOR = 5
+RECENT_WEEK_COMPLETENESS_WINDOW = 4
+MIN_RECENT_WEEK_COMPLETENESS = 0.50
+REQUIRE_PREVIOUS_WEEK_ABOVE_FLOOR = False
 
 CFPB_NATIONAL_FLOORS: dict[str, int] = {
-    "Payment Fraud":          200,
-    "Account Takeover":       150,
-    "Debit Card Fraud":       100,
-    "Credit Card Fraud":      175,
-    "Identity Theft":         125,
-    "Debt Collection Fraud":   80,
-    "Gift Card Scam":          40,
-    "Predatory Service Scam":  30,
-    "default":                 75,
+    "Fraud or scam": 120,
+    "Managing an account": 90,
+    "Problem with a lender or other company charging your account": 60,
+    "Problem with a purchase shown on your statement": 80,
+    "Getting a credit card": 45,
+    "False statements or representation": 100,
+    "Problem with a purchase or transfer": 15,
+    "Didn't provide services promised": 10,
+    "default": 50,
 }
 
-# Six-tier state floors keyed by scam_type, values are [T1, T2, T3, T4, T5, T6]
+# Six-tier state floors keyed by CFPB issue, values are [T1, T2, T3, T4, T5, T6]
 CFPB_STATE_FLOORS: dict[str, list[int]] = {
-    "Payment Fraud":          [40, 20, 10, 8, 8, 8],
-    "Account Takeover":       [30, 15, 10, 8, 8, 8],
-    "Debit Card Fraud":       [20, 12,  8, 8, 8, 8],
-    "Credit Card Fraud":      [35, 18, 10, 8, 8, 8],
-    "Identity Theft":         [25, 12,  8, 8, 8, 8],
-    "Debt Collection Fraud":  [16, 10,  8, 8, 8, 8],
-    "Gift Card Scam":         [10,  8,  8, 8, 8, 8],
-    "Predatory Service Scam": [ 8,  8,  8, 8, 8, 8],
-    "default":                [15,  8,  8, 8, 8, 8],
+    "Fraud or scam": [8, 5, 5, 5, 5, 5],
+    "Managing an account": [8, 5, 5, 5, 5, 5],
+    "Problem with a lender or other company charging your account": [8, 5, 5, 5, 5, 5],
+    "Problem with a purchase shown on your statement": [10, 6, 5, 5, 5, 5],
+    "Getting a credit card": [8, 5, 5, 5, 5, 5],
+    "False statements or representation": [10, 6, 5, 5, 5, 5],
+    "Problem with a purchase or transfer": [5, 5, 5, 5, 5, 5],
+    "Didn't provide services promised": [5, 5, 5, 5, 5, 5],
+    "default": [5, 5, 5, 5, 5, 5],
 }
 
 TIER_ORDER = {"CRITICAL": 0, "ALERT": 1, "WATCH": 2}
@@ -190,6 +193,48 @@ def _build_national_df(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _select_analysis_week(df: pd.DataFrame, trace: bool = False) -> pd.Timestamp:
+    """Choose the latest CFPB week that is not obviously suppressed by reporting lag."""
+    if "state" in df.columns:
+        weekly_df = _build_national_df(df)
+    else:
+        weekly_df = df
+
+    totals = (
+        weekly_df.groupby("week_ending", dropna=False)["report_count"]
+        .sum()
+        .sort_index()
+    )
+    if totals.empty:
+        return df["week_ending"].max()
+
+    selected_week = totals.index.max()
+    for week in sorted(totals.index, reverse=True):
+        previous = totals[totals.index < week].tail(RECENT_WEEK_COMPLETENESS_WINDOW)
+        if len(previous) < RECENT_WEEK_COMPLETENESS_WINDOW:
+            selected_week = week
+            break
+
+        baseline = float(previous.median())
+        current_total = float(totals.loc[week])
+        minimum_total = baseline * MIN_RECENT_WEEK_COMPLETENESS
+        if baseline <= 0 or current_total >= minimum_total:
+            selected_week = week
+            break
+
+        _trace(
+            trace,
+            "[WEEK DROP]",
+            f"{week.date().isoformat()} total={int(current_total)}"
+            f" < {MIN_RECENT_WEEK_COMPLETENESS:.0%} of recent median {int(baseline)}"
+            " (likely CFPB reporting lag)",
+        )
+
+    if selected_week != totals.index.max():
+        _trace(trace, "[WEEK USE]", f"using {selected_week.date().isoformat()} for CFPB alerts")
+    return selected_week
+
+
 # ── State-level detection ──────────────────────────────────────────────────────
 
 def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[str, Any]]:
@@ -198,7 +243,7 @@ def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[st
     if state_df.empty:
         return []
 
-    current_week = df["week_ending"].max()
+    current_week = _select_analysis_week(df, trace=trace)
     candidates: list[dict[str, Any]] = []
     trace_counts: dict[str, int] = {
         "no_current": 0, "f1": 0, "f2": 0, "f3": 0, "f4": 0, "survived": 0,
@@ -262,16 +307,21 @@ def detect_cfpb_anomalies(df: pd.DataFrame, trace: bool = False) -> list[dict[st
             )
             continue
 
-        # Filter 4: trend shape — previous week also above floor
+        # Filter 4: optional trend shape — previous week also above floor
         prev_row = historical.tail(1)
         prev_count = float(prev_row.iloc[0]["report_count"]) if not prev_row.empty else 0.0
-        if prev_row.empty or prev_count < floor:
+        if REQUIRE_PREVIOUS_WEEK_ABOVE_FLOOR and (prev_row.empty or prev_count < floor):
             trace_counts["f4"] += 1
             _trace(
                 trace, "[F4 DROP]",
                 f"{combo}  →  prev_count={int(prev_count)} < floor={floor}  (single-week spike)"
             )
             continue
+        if prev_row.empty or prev_count < floor:
+            _trace(
+                trace, "[F4 NOTE]",
+                f"{combo}  →  prev_count={int(prev_count)} < floor={floor}  (allowed)",
+            )
 
         # No Filter 5 (dollar trajectory) — CFPB trends have no dollar data
 
@@ -351,7 +401,7 @@ def detect_cfpb_anomalies_national(df: pd.DataFrame, trace: bool = False) -> lis
     if national_df.empty:
         return []
 
-    current_week = national_df["week_ending"].max()
+    current_week = _select_analysis_week(national_df, trace=trace)
     candidates: list[dict[str, Any]] = []
     trace_counts: dict[str, int] = {
         "no_current": 0, "f1": 0, "f2": 0, "f3": 0, "f4": 0, "survived": 0,
@@ -414,10 +464,12 @@ def detect_cfpb_anomalies_national(df: pd.DataFrame, trace: bool = False) -> lis
             continue
 
         # Filter 4
-        if prev_row.empty or prev_count < floor:
+        if REQUIRE_PREVIOUS_WEEK_ABOVE_FLOOR and (prev_row.empty or prev_count < floor):
             trace_counts["f4"] += 1
             _trace(trace, "[NAT-F4 DROP]", f"{label}  →  prev={int(prev_count)} < floor={floor}")
             continue
+        if prev_row.empty or prev_count < floor:
+            _trace(trace, "[NAT-F4 NOTE]", f"{label}  →  prev={int(prev_count)} < floor={floor}  (allowed)")
 
         tier = _base_tier(short_dev, long_dev)
         trace_counts["survived"] += 1
