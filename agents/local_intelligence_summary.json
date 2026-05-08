@@ -1,0 +1,87 @@
+{
+  "timestamp": "2026-05-07T14:53:48.930104+00:00",
+  "cities": {
+    "Chicago": {
+      "crime_records_7days": 0,
+      "crime_by_scam_category": {},
+      "crime_12wk_average": 0.0,
+      "crime_deviation": 0.0,
+      "crime_spike": false,
+      "spike_driven_by": [],
+      "news_warnings": 0,
+      "news_arrests": 0,
+      "news_advisories": 0,
+      "news_reports": 0,
+      "top_keywords": [],
+      "keyword_overlap_crime_news": [],
+      "bbb_alerts": [
+        {
+          "scam_type": "Online Purchase",
+          "alert_tier": "ALERT",
+          "short_deviation": 1.283,
+          "scope": "National",
+          "detection_level": "Both"
+        }
+      ],
+      "cfpb_alerts": [],
+      "cross_source_matches": [],
+      "combined_risk": "LOW",
+      "risk_reason": "Only isolated scam signals are present with no cross-source match or crime spike."
+    },
+    "New York": {
+      "crime_records_7days": 0,
+      "crime_by_scam_category": {},
+      "crime_12wk_average": 0.0,
+      "crime_deviation": 0.0,
+      "crime_spike": false,
+      "spike_driven_by": [],
+      "news_warnings": 0,
+      "news_arrests": 0,
+      "news_advisories": 0,
+      "news_reports": 0,
+      "top_keywords": [],
+      "keyword_overlap_crime_news": [],
+      "bbb_alerts": [],
+      "cfpb_alerts": [],
+      "cross_source_matches": [],
+      "combined_risk": "LOW",
+      "risk_reason": "Only isolated scam signals are present with no cross-source match or crime spike."
+    },
+    "Los Angeles": {
+      "crime_records_7days": 0,
+      "crime_by_scam_category": {},
+      "crime_12wk_average": 0.0,
+      "crime_deviation": 0.0,
+      "crime_spike": false,
+      "spike_driven_by": [],
+      "news_warnings": 0,
+      "news_arrests": 0,
+      "news_advisories": 0,
+      "news_reports": 0,
+      "top_keywords": [],
+      "keyword_overlap_crime_news": [],
+      "bbb_alerts": [
+        {
+          "scam_type": "Other",
+          "alert_tier": "CRITICAL",
+          "short_deviation": 6.584,
+          "scope": "Local",
+          "detection_level": "State"
+        },
+        {
+          "scam_type": "Counterfeit Product",
+          "alert_tier": "CRITICAL",
+          "short_deviation": 3.486,
+          "scope": "Local",
+          "detection_level": "State"
+        }
+      ],
+      "cfpb_alerts": [],
+      "cross_source_matches": [],
+      "combined_risk": "LOW",
+      "risk_reason": "Only isolated scam signals are present with no cross-source match or crime spike."
+    }
+  },
+  "high_risk_cities": [],
+  "national_cross_source_signals": []
+}

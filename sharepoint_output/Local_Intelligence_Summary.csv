@@ -1,0 +1,4 @@
+city,combined_risk,crime_records_7days,crime_deviation,crime_spike,top_crime_scam_category,news_warnings,news_arrests,keyword_overlap_count,bbb_alerts_count,cfpb_alerts_count,cross_source_matches_count,risk_reason
+Chicago,LOW,0,0.0,False,,0,0,0,1,0,0,Only isolated scam signals are present with no cross-source match or crime spike.
+New York,LOW,0,0.0,False,,0,0,0,0,0,0,Only isolated scam signals are present with no cross-source match or crime spike.
+Los Angeles,LOW,0,0.0,False,,0,0,0,2,0,0,Only isolated scam signals are present with no cross-source match or crime spike.

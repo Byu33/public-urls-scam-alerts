@@ -34,8 +34,12 @@ import build_cfpb_trends as cfpb_build_trends
 import detect_cfpb_anomalies as cfpb_detect
 import fetch_complaints as cfpb_fetch_complaints
 import sample_cfpb_narratives as cfpb_sample_narratives
+from local import analyze_local_intelligence
+from local import fetch_crime_api as local_fetch_crime_api
+from local import fetch_law_enforcement_news
+from local import fetch_local_rss
 
-TOTAL_STEPS = 13  # Steps 1-7 (BBB) + Steps 9-14 (CFPB + final report); step 8 retired
+TOTAL_STEPS = 17  # Steps 1-7 (BBB) + 9-13 (CFPB) + 14-17 (local) + final; step 8 retired
 UPSERT_BATCH_SIZE = 500
 
 
@@ -385,6 +389,51 @@ def step_cfpb_sample_narratives(
     return {"cfpb_alerts_inserted": inserted}
 
 
+# ── Local scam-intelligence step functions ────────────────────────────────────
+
+def step_local_fetch_crime_api() -> dict[str, Any]:
+    result = local_fetch_crime_api.run_fetch()
+    print(
+        "LOCAL STEP 10 result: "
+        f"stored={result.get('records_upserted', 0)} "
+        f"after_filter={result.get('records_after_scam_filtering', 0)} "
+        f"rejected={result.get('records_skipped_as_non_scam', 0)} "
+        f"categories={result.get('category_breakdown', {})}"
+    )
+    return result
+
+
+def step_local_fetch_law_enforcement_news() -> dict[str, Any]:
+    result = fetch_law_enforcement_news.run_fetch()
+    print(
+        "LOCAL STEP 11 result: "
+        f"stored={result.get('records_upserted', 0)} "
+        f"sources={result.get('stored_by_source', {})} "
+        f"rejections={result.get('rejection_reason_breakdown', {})}"
+    )
+    return result
+
+
+def step_local_fetch_rss() -> dict[str, Any]:
+    result = fetch_local_rss.run_fetch()
+    print(
+        "LOCAL STEP 12 result: "
+        f"stored={result.get('records_upserted', 0)} "
+        f"rejections={result.get('rejection_breakdown', {})}"
+    )
+    return result
+
+
+def step_local_analyze_intelligence() -> dict[str, Any]:
+    result = analyze_local_intelligence.analyze()
+    cities = result.get("cities", {})
+    print("LOCAL STEP 13 result: city risk assessments")
+    for city, data in cities.items():
+        print(f"- {city}: {data.get('combined_risk')} | matches={len(data.get('cross_source_matches', []))}")
+    print(f"High risk cities: {result.get('high_risk_cities', [])}")
+    return result
+
+
 def _is_missing_table_error(exc: Exception) -> bool:
     code = getattr(exc, "code", None)
     message = str(exc)
@@ -706,8 +755,13 @@ def run_pipeline(bbb_only: bool = False, start_step: int = 1) -> None:
         print("STEPS 9-13 - CFPB PIPELINE skipped: cfpb_trends table missing")
         steps_completed += 5  # account for the skipped steps
 
+    execute_step(14, "LOCAL STEP 10 - FETCH CRIME API", step_local_fetch_crime_api)
+    execute_step(15, "LOCAL STEP 11 - FETCH LAW ENFORCEMENT NEWS", step_local_fetch_law_enforcement_news)
+    execute_step(16, "LOCAL STEP 12 - FETCH LOCAL RSS", step_local_fetch_rss)
+    execute_step(17, "LOCAL STEP 13 - ANALYZE LOCAL INTELLIGENCE", step_local_analyze_intelligence)
+
     execute_step(
-        14,
+        18,
         "FINAL REPORT",
         lambda: print_final_report(started_at, step_timings, detect_result, sampled_result, failures),
     )
@@ -754,7 +808,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    start_step = max(1, min(args.start_step, 14))
+    start_step = max(1, min(args.start_step, 18))
     if args.skip_fetch:
         start_step = max(start_step, 2)
 
